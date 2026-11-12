@@ -17,6 +17,16 @@ $py = Join-Path $back "venv\Scripts\python.exe"
 if (-not (Test-Path $py)) { throw "Falta el venv del backend: cd asistencia_backend; python -m venv venv; venv\Scripts\pip install -r requirements.txt" }
 if (-not (Test-Path (Join-Path $front "node_modules"))) { throw "Faltan las dependencias del frontend: cd asistencia_frontend; npm ci" }
 
+# PATH actualizado (por si se instaló terraform/pulumi después de abrir esta terminal o VS Code):
+# las ventanas nuevas lo heredan y el worker encuentra los programas.
+$env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+# Igual con la frase de Pulumi, si se guardó como variable del usuario
+$frase = [Environment]::GetEnvironmentVariable("PULUMI_CONFIG_PASSPHRASE", "User")
+if ($frase) { $env:PULUMI_CONFIG_PASSPHRASE = $frase }
+foreach ($programa in "terraform", "pulumi") {
+    if (-not (Get-Command $programa -ErrorAction SilentlyContinue)) { Write-Host "Aviso: no se encontró «$programa» (el motor que lo usa fallará)." -ForegroundColor Yellow }
+}
+
 function Ventana($titulo, $carpeta, $comando) {
     Start-Process powershell -WorkingDirectory $carpeta -ArgumentList @(
         "-NoExit", "-Command", "`$Host.UI.RawUI.WindowTitle = '$titulo'; $comando"
