@@ -129,7 +129,6 @@ cd asistencia_frontend; npx vite --port 5174
 | "Port 5173 is already in use" | Ya hay otro `npm run dev` abierto | Ciérralo (o cámbiale el puerto) |
 | Error de CORS en la consola del navegador | Falta el puerto en `CORS_ALLOWED_ORIGINS` | Agrega `http://localhost:5174` (y 5173) y reinicia el backend |
 | No recuerdo la contraseña del admin | — | `venv\Scripts\python manage.py changepassword admin` |
-| El motor "CloudFormation" sale deshabilitado | Es intencional | Ver [COMPARACION-MOTORES.md](COMPARACION-MOTORES.md) |
 
 ## 6 · Empezar de cero
 

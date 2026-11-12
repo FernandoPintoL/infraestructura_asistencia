@@ -26,7 +26,7 @@ worker, plataforma en **:5173** y app de asistencia en **:5174**). La barra mues
 
 | # | Qué | Comando / dónde | Detalle |
 |---|---|---|---|
-| 1 | Credenciales de AWS | `aws configure` | Usuario con permisos sobre EC2, IAM, SSM, S3 |
+| 1 | Credenciales de AWS | `aws configure` | Usuario con permisos sobre EC2, IAM, SSM, S3 (+ CloudFormation si se usa ese motor). Ver [CREDENCIALES.md](CREDENCIALES.md) |
 | 2 | Estado y respaldos | `infraestructura/terraform/bootstrap` → `terraform apply` | Buckets S3; genera `tenant/backend.hcl` |
 | 3 | Imagen base (opcional) | `infraestructura/packer` → `packer build .` | AMI en `manifest.json` → `IAC_AMI_ID` |
 | 4 | Monitoreo | `infraestructura/terraform/monitoreo` → `terraform apply -var 'acceso_cidrs=["<tu IP>/32"]'` | Grafana; `IAC_MONITOREO_SG`, `GRAFANA_URL`, `GRAFANA_TOKEN` |
@@ -37,6 +37,7 @@ worker, plataforma en **:5173** y app de asistencia en **:5174**). La barra mues
 Variables mínimas del `.env` de la plataforma: `PLATAFORMA_HABILITADA=True`, `DB_*`,
 `IAC_BUCKET_RESPALDOS`. Opcionales: `IAC_AMI_ID`, `IAC_MONITOREO_SG`, `GRAFANA_URL`, `GRAFANA_TOKEN`,
 `IAC_PULUMI_BACKEND` (+ `PULUMI_CONFIG_PASSPHRASE` en el entorno del worker, solo para Pulumi).
+El motor CloudFormation no necesita nada más: usa la API de AWS con las mismas credenciales.
 
 Cada operación se puede hacer de tres formas: **pantalla** de la plataforma, **API**
 (`/api/plataforma/...`, token de `login/`) o **a mano** con `infraestructura/terraform/tenant/tenant.ps1`.

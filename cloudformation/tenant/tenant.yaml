@@ -1,0 +1,353 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Un tenant del sistema de asistencia (frontend, backend y base de datos en 3 EC2). Tercera
+  implementación, equivalente a infraestructura/terraform/tenant y pulumi/tenant. La crea y
+  actualiza la plataforma (plataforma/motores/cloudformation.py), que además prepara los
+  secretos en SSM, arma el .env del backend y suspende/reanuda las instancias, porque
+  CloudFormation no puede hacerlo por sí solo (ver docs/COMPARACION-MOTORES.md).
+
+# ───────────── Parámetros (los completa la plataforma; ninguno es secreto) ─────────────
+Parameters:
+  TenantId:
+    Type: String
+    AllowedPattern: "^[a-z][a-z0-9-]{1,18}[a-z0-9]$"
+    ConstraintDescription: 3 a 20 minúsculas, números y guiones.
+  Entorno:
+    Type: String
+    AllowedValues: [dev, staging, prod]
+  TipoFrontend:
+    Type: String
+    Default: t3.micro
+  TipoBackend:
+    Type: String
+    Default: t3.micro
+  TipoDb:
+    Type: String
+    Default: t3.micro
+  DiscoDbGb:
+    Type: Number
+    MinValue: 8
+    MaxValue: 500
+    Description: >-
+      Tamaño del disco de la base al CREARLA. Después la plataforma lo agranda con la API de EC2
+      (cambiarlo aquí reemplazaría la instancia y se perderían los datos).
+  DiscoAppGb:
+    Type: Number
+    Default: 12
+  AmiId:
+    Type: AWS::EC2::Image::Id
+    Description: Imagen de Packer o Ubuntu 24.04 de Canonical (la elige la plataforma al crear).
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+  SsmPrefijo:
+    Type: String
+    AllowedPattern: "^/asistencia/[a-z0-9-]+/(dev|staging|prod)$"
+  BucketRespaldos:
+    Type: String
+    Default: ""
+  MonitoreoSgId:
+    Type: String
+    Default: ""
+    Description: Security group del servidor de monitoreo (vacío = sin métricas).
+  SshCidr:
+    Type: String
+    Default: ""
+    Description: IP o red que puede entrar por SSH (vacío = solo Session Manager).
+  # cloud-init de cada instancia, ya completado por la plataforma con los mismos archivos que
+  # usa Terraform (terraform/tenant/cloud-init). Backend y db van comprimidos (gzip + base64)
+  # para entrar en el límite de 4096 bytes por parámetro. El del frontend va en dos partes
+  # porque necesita la IP privada del backend, que solo se conoce dentro de la pila.
+  UserDataDb:
+    Type: String
+  UserDataBackend:
+    Type: String
+  UserDataFrontendInicio:
+    Type: String
+  UserDataFrontendFin:
+    Type: String
+
+Conditions:
+  HayMonitoreo: !Not [!Equals [!Ref MonitoreoSgId, ""]]
+  HaySsh: !Not [!Equals [!Ref SshCidr, ""]]
+  HayRespaldos: !Not [!Equals [!Ref BucketRespaldos, ""]]
+
+Resources:
+  # ───────────── Red: el frontend es la única entrada pública ─────────────
+  SgFrontend:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub asistencia-${TenantId}-${Entorno}-frontend
+      GroupDescription: !Sub "Frontend del tenant ${TenantId}: unica entrada publica"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: HTTP publico
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - !If
+          - HaySsh
+          - { Description: SSH de administracion, IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref SshCidr }
+          - !Ref AWS::NoValue
+      Tags: [{ Key: Name, Value: !Sub "asistencia-${TenantId}-${Entorno}-frontend" }]
+
+  SgBackend:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub asistencia-${TenantId}-${Entorno}-backend
+      GroupDescription: !Sub "Backend del tenant ${TenantId}: solo desde su frontend"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: HTTP solo desde el frontend del mismo tenant
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          SourceSecurityGroupId: !Ref SgFrontend
+        - !If
+          - HaySsh
+          - { Description: SSH de administracion, IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref SshCidr }
+          - !Ref AWS::NoValue
+      Tags: [{ Key: Name, Value: !Sub "asistencia-${TenantId}-${Entorno}-backend" }]
+
+  SgDb:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub asistencia-${TenantId}-${Entorno}-db
+      GroupDescription: !Sub "PostgreSQL del tenant ${TenantId}: solo desde su backend"
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: PostgreSQL solo desde el backend del mismo tenant
+          IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref SgBackend
+        - !If
+          - HaySsh
+          - { Description: SSH de administracion, IpProtocol: tcp, FromPort: 22, ToPort: 22, CidrIp: !Ref SshCidr }
+          - !Ref AWS::NoValue
+      Tags: [{ Key: Name, Value: !Sub "asistencia-${TenantId}-${Entorno}-db" }]
+
+  # Métricas: solo el servidor de monitoreo llega a los exportadores y a /metrics
+  MetricasFrontendNode:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HayMonitoreo
+    Properties:
+      GroupId: !Ref SgFrontend
+      SourceSecurityGroupId: !Ref MonitoreoSgId
+      IpProtocol: tcp
+      FromPort: 9100
+      ToPort: 9100
+      Description: "Monitoreo: frontend-node"
+  MetricasBackendNode:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HayMonitoreo
+    Properties:
+      GroupId: !Ref SgBackend
+      SourceSecurityGroupId: !Ref MonitoreoSgId
+      IpProtocol: tcp
+      FromPort: 9100
+      ToPort: 9100
+      Description: "Monitoreo: backend-node"
+  MetricasBackendApp:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HayMonitoreo
+    Properties:
+      GroupId: !Ref SgBackend
+      SourceSecurityGroupId: !Ref MonitoreoSgId
+      IpProtocol: tcp
+      FromPort: 80
+      ToPort: 80
+      Description: "Monitoreo: backend-app"
+  MetricasDbNode:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HayMonitoreo
+    Properties:
+      GroupId: !Ref SgDb
+      SourceSecurityGroupId: !Ref MonitoreoSgId
+      IpProtocol: tcp
+      FromPort: 9100
+      ToPort: 9100
+      Description: "Monitoreo: db-node"
+  MetricasDbPostgres:
+    Type: AWS::EC2::SecurityGroupIngress
+    Condition: HayMonitoreo
+    Properties:
+      GroupId: !Ref SgDb
+      SourceSecurityGroupId: !Ref MonitoreoSgId
+      IpProtocol: tcp
+      FromPort: 9187
+      ToPort: 9187
+      Description: "Monitoreo: db-postgres"
+
+  IpFrontend:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags: [{ Key: Name, Value: !Sub "asistencia-${TenantId}-${Entorno}-frontend" }]
+
+  # Llave SSH: CloudFormation la genera y guarda la privada en SSM (/ec2/keypair/<id>)
+  LlaveSsh:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: !Sub asistencia-${TenantId}-${Entorno}-key
+      KeyType: ed25519
+
+  # ───────────── Roles IAM: cada instancia solo lee SUS secretos ─────────────
+  RolFrontend:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub asistencia-${TenantId}-${Entorno}-frontend
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{ Effect: Allow, Action: sts:AssumeRole, Principal: { Service: ec2.amazonaws.com } }]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore]
+
+  RolBackend:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub asistencia-${TenantId}-${Entorno}-backend
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{ Effect: Allow, Action: sts:AssumeRole, Principal: { Service: ec2.amazonaws.com } }]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore]
+      Policies:
+        - PolicyName: leer-secretos-propios
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ssm:GetParameter, ssm:GetParameters]
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefijo}/backend/*"
+
+  RolDb:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub asistencia-${TenantId}-${Entorno}-db
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement: [{ Effect: Allow, Action: sts:AssumeRole, Principal: { Service: ec2.amazonaws.com } }]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore]
+      Policies:
+        - PolicyName: leer-secretos-propios
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ssm:GetParameter, ssm:GetParameters]
+                Resource: !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefijo}/db/*"
+        - !If
+          - HayRespaldos
+          - PolicyName: respaldos-propios
+            PolicyDocument:
+              Version: "2012-10-17"
+              Statement:
+                - Effect: Allow
+                  Action: [s3:PutObject, s3:GetObject]
+                  Resource: !Sub "arn:${AWS::Partition}:s3:::${BucketRespaldos}/tenants/${TenantId}/${Entorno}/*"
+          - !Ref AWS::NoValue
+
+  PerfilFrontend:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub asistencia-${TenantId}-${Entorno}-frontend
+      Roles: [!Ref RolFrontend]
+  PerfilBackend:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub asistencia-${TenantId}-${Entorno}-backend
+      Roles: [!Ref RolBackend]
+  PerfilDb:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub asistencia-${TenantId}-${Entorno}-db
+      Roles: [!Ref RolDb]
+
+  # ───────────── Las 3 instancias ─────────────
+  # Las etiquetas Proyecto/Tenant/Entorno/Plan/GestionadoPor las pone la pila (se propagan).
+  # Cambio de plan = cambio de tipo: CloudFormation lo hace en sitio (stop → tipo → start).
+  # AmiId y UserData* se mandan igual que la primera vez (la plataforma usa el valor previo),
+  # así nunca se reemplaza una instancia por una versión nueva de la app o de la AMI.
+  Db:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref TipoDb
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!Ref SgDb]
+      KeyName: !Ref LlaveSsh
+      IamInstanceProfile: !Ref PerfilDb
+      MetadataOptions: { HttpEndpoint: enabled, HttpTokens: required }
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeSize: !Ref DiscoDbGb, VolumeType: gp3, Encrypted: true }
+      UserData: !Ref UserDataDb
+      Tags:
+        - { Key: Name, Value: !Sub "asistencia-${TenantId}-${Entorno}-db" }
+        - { Key: Servicio, Value: db }
+
+  Backend:
+    Type: AWS::EC2::Instance
+    # Primero la base: la plataforma arma el .env del backend en cuanto conoce su IP privada
+    DependsOn: Db
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref TipoBackend
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!Ref SgBackend]
+      KeyName: !Ref LlaveSsh
+      IamInstanceProfile: !Ref PerfilBackend
+      MetadataOptions: { HttpEndpoint: enabled, HttpTokens: required }
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeSize: !Ref DiscoAppGb, VolumeType: gp3, Encrypted: true }
+      UserData: !Ref UserDataBackend
+      Tags:
+        - { Key: Name, Value: !Sub "asistencia-${TenantId}-${Entorno}-backend" }
+        - { Key: Servicio, Value: backend }
+
+  Frontend:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref TipoFrontend
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!Ref SgFrontend]
+      KeyName: !Ref LlaveSsh
+      IamInstanceProfile: !Ref PerfilFrontend
+      MetadataOptions: { HttpEndpoint: enabled, HttpTokens: required }
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs: { VolumeSize: !Ref DiscoAppGb, VolumeType: gp3, Encrypted: true }
+      # Nginx reenvía /api al backend por su IP privada
+      UserData:
+        Fn::Base64: !Join ["", [!Ref UserDataFrontendInicio, !GetAtt Backend.PrivateIp, !Ref UserDataFrontendFin]]
+      Tags:
+        - { Key: Name, Value: !Sub "asistencia-${TenantId}-${Entorno}-frontend" }
+        - { Key: Servicio, Value: frontend }
+
+  AsociacionIpFrontend:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt IpFrontend.AllocationId
+      InstanceId: !Ref Frontend
+
+# ───────────── Salidas (la plataforma las convierte a las mismas claves que Terraform) ─────────────
+Outputs:
+  IpPublica:
+    Value: !Ref IpFrontend
+  InstanciaFrontend:
+    Value: !Ref Frontend
+  InstanciaBackend:
+    Value: !Ref Backend
+  InstanciaDb:
+    Value: !Ref Db
+  IpPrivadaFrontend:
+    Value: !GetAtt Frontend.PrivateIp
+  IpPrivadaBackend:
+    Value: !GetAtt Backend.PrivateIp
+  IpPrivadaDb:
+    Value: !GetAtt Db.PrivateIp
+  LlaveSshId:
+    Value: !GetAtt LlaveSsh.KeyPairId

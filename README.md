@@ -2,7 +2,7 @@
 
 Plataforma para crear y administrar **tenants** (instituciones educativas) de la aplicación de
 registro de asistencia. Cada tenant tiene su propio **frontend, backend y base de datos** en AWS
-(3 EC2), elegidos según un **plan**, aprovisionados con **Terraform, OpenTofu o Pulumi**,
+(3 EC2), elegidos según un **plan**, aprovisionados con **Terraform, OpenTofu, Pulumi o CloudFormation**,
 monitoreados con **Grafana**, y con suspensión, respaldos y eliminación controlada.
 
 ## Repositorios
@@ -13,7 +13,7 @@ El proyecto son **tres repositorios** que se clonan uno al lado del otro:
 |---|---|---|
 | [asistencia_backend](https://github.com/FernandoPintoL/asistencia_backend) | `asistencia_backend/` | Django: la app de asistencia (lo que corre en cada tenant) + `plataforma/` (planes, tenants, operaciones, worker, motores, respaldos, alertas) |
 | [asistencia_frontend](https://github.com/FernandoPintoL/asistencia_frontend) | `asistencia_frontend/` | React: la app de asistencia + `src/plataforma/` (pantallas de la plataforma, solo con `VITE_PLATAFORMA=true`) |
-| **infraestructura_asistencia** (este) | `infraestructura/` | Terraform, Pulumi, Packer, Ansible, documentación y el script de pruebas locales |
+| **infraestructura_asistencia** (este) | `infraestructura/` | Terraform, Pulumi, CloudFormation, Packer, Ansible, documentación y el script de pruebas locales |
 
 ```powershell
 git clone https://github.com/FernandoPintoL/asistencia_backend.git
@@ -32,7 +32,7 @@ backend y el frontend desde GitHub, así que la versión que se despliega es la 
 |---|---|
 | [`terraform/`](terraform/README.md) | `bootstrap/` (estado y respaldos), `tenant/` (un tenant), `monitoreo/` (Prometheus + Grafana) |
 | [`pulumi/`](pulumi/tenant/README.md) | El mismo tenant en Pulumi (segunda implementación) |
-| [`cloudformation/`](cloudformation/README.md) | Versión de un solo tenant, usada solo para la comparación de motores |
+| [`cloudformation/`](cloudformation/tenant/README.md) | El mismo tenant en CloudFormation (tercera implementación) y la versión anterior de un solo sistema |
 | [`packer/`](packer/README.md) | Imagen base (AMI) |
 | [`ansible/`](ansible/README.md) | Configuración posterior de la flota de tenants |
 | [`docs/`](docs/) | Arquitectura, planes, operación, credenciales, pruebas locales, comparación de motores y guion de la demo |
@@ -58,8 +58,8 @@ backend y el frontend desde GitHub, así que la versión que se despliega es la 
 | RF-01–04 Catálogo de planes, recursos, elección, edición | `Plan`, pantalla *Planes*, tarjetas en *Nuevo tenant*, auditoría de cambios | `CambioPlanTests` |
 | RF-05 No exceder límites | `MAX_ESTUDIANTES` / `MAX_MODULOS` en el backend del tenant + alertas de Grafana | `LimitesPlanTests` |
 | RF-06 Cambiar plan y ver qué cambia | `diferencias_plan`, *Cambiar plan*, preview del motor | `CambioPlanTests` |
-| RF-07–08 Crear tenant y elegir motor | *Nuevo tenant*; motores Terraform, OpenTofu, Pulumi | `CreacionTests`, `MotorPulumiTests` |
-| RF-09–10 Recursos y conexión a la base | Plantillas Terraform/Pulumi + cloud-init (secretos por SSM) | `test_programa.py` (Pulumi) |
+| RF-07–08 Crear tenant y elegir motor | *Nuevo tenant*; motores Terraform, OpenTofu, Pulumi, CloudFormation | `CreacionTests`, `MotorPulumiTests`, `MotorCloudFormationTests` |
+| RF-09–10 Recursos y conexión a la base | Plantillas Terraform/Pulumi/CloudFormation + cloud-init (secretos por SSM) | `test_programa.py` (Pulumi), `cfn-lint` |
 | RF-11 Progreso y errores comprensibles | Operaciones con paso, %, log sin secretos, `traducir_error` | `SeguridadTests`, `FallosYReintentosTests` |
 | RF-12 Reintentar sin duplicar | `reintentar` + estado de IaC en S3 | `FallosYReintentosTests` |
 | RF-13 Versiones registradas | Motor, plantilla (sha256), proveedores, AMI, app, commits | `CreacionTests`, `DespliegueTests` |
@@ -89,4 +89,5 @@ leerlas de SSM: [docs/CREDENCIALES.md](docs/CREDENCIALES.md).
 cd asistencia_backend; $env:DB_ENGINE="sqlite"; python manage.py test      # app + plataforma
 cd ..\infraestructura\pulumi\tenant; python -m pytest test_programa.py      # programa de Pulumi con mocks
 cd ..\..\terraform\tenant; terraform validate                               # plantillas
+cd ..\..\cloudformation\tenant; cfn-lint tenant.yaml --regions us-east-1    # plantilla de CloudFormation
 ```

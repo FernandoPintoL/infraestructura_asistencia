@@ -1,4 +1,8 @@
-# Infraestructura · AWS con CloudFormation + cloud-init
+# Infraestructura · AWS con CloudFormation + cloud-init (versión de un solo sistema)
+
+> **Trabajo anterior del módulo**, conservado como referencia para la
+> [comparación de motores](../../docs/COMPARACION-MOTORES.md). La plataforma de tenants usa
+> [`../tenant/`](../tenant/README.md).
 
 Crea **3 instancias EC2** (Ubuntu 24.04), una por servicio, con una sola plantilla
 (`asistencia.yaml`). Cada instancia se instala sola al arrancar con un **`#cloud-config`**

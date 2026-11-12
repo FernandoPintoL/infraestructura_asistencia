@@ -14,13 +14,14 @@ packages:
 write_files:
   # Descarga el .env desde SSM. Lo ejecuta systemd ANTES de cada arranque de Gunicorn,
   # así un cambio de plan (límites) o una reanudación toma siempre la versión vigente.
+  # Espera hasta 10 min: con CloudFormation la plataforma lo escribe mientras se crea la pila.
   - path: /usr/local/sbin/asistencia-env
     permissions: "0750"
     content: |
       #!/bin/bash
       set -euo pipefail
       umask 077
-      for intento in $(seq 1 30); do
+      for intento in $(seq 1 60); do
         if /snap/bin/aws ssm get-parameter --region "${region}" \
             --name "${ssm_prefijo}/backend/env" --with-decryption \
             --query Parameter.Value --output text > /etc/asistencia.env.tmp; then

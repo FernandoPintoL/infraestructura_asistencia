@@ -1,6 +1,6 @@
 # Credenciales: cuáles hay y cómo obtenerlas
 
-Regla general: **casi ninguna contraseña se escribe a mano.** Terraform (o Pulumi) las genera al
+Regla general: **casi ninguna contraseña se escribe a mano.** Terraform o Pulumi (o la plataforma, con CloudFormation) las genera al
 crear cada recurso y las guarda cifradas en **AWS SSM Parameter Store** (`SecureString`). Se leen
 con la AWS CLI desde una PC con permisos; no aparecen en el log de la plataforma (se redactan) ni en
 los repositorios.
@@ -22,7 +22,7 @@ Todos los comandos son para PowerShell y asumen la región `us-east-1`.
 | Token de Grafana | — | Lo creas en Grafana | `.env` → `GRAFANA_TOKEN` |
 | App de cada tenant | `admin` | SSM `/asistencia/<tenant>/<entorno>/backend/admin_password` | `http://<IP>/panel/login` y `/django-admin/` |
 | Base de datos de cada tenant | `asistencia` | SSM `/asistencia/<tenant>/<entorno>/db/password` | Solo el backend del tenant |
-| Llave SSH de cada tenant | `ubuntu` | SSM `/asistencia/<tenant>/<entorno>/ssh/private_key` | Emergencias (normalmente se usa Session Manager) |
+| Llave SSH de cada tenant | `ubuntu` | SSM `/asistencia/<tenant>/<entorno>/ssh/private_key` (con CloudFormation: `/ec2/keypair/<id>`, ver salida `leer_llave_ssh`) | Emergencias (normalmente se usa Session Manager) |
 | Pulumi | — | `PULUMI_CONFIG_PASSPHRASE` (la inventas) | Solo si usas el motor Pulumi |
 
 ---
@@ -30,10 +30,11 @@ Todos los comandos son para PowerShell y asumen la región `us-east-1`.
 ## 1 · AWS (quien despliega)
 
 Un usuario IAM con estas políticas administradas: `AmazonEC2FullAccess`, `AmazonS3FullAccess`,
-`AmazonSSMFullAccess` e `IAMFullAccess`.
+`AmazonSSMFullAccess` e `IAMFullAccess`. Para crear tenants con el motor **CloudFormation**,
+además `AWSCloudFormationFullAccess`.
 
 1. Consola de AWS (con la cuenta raíz o un administrador) → **IAM → Users** → el usuario →
-   **Add permissions → Attach policies directly** → marcar las 4.
+   **Add permissions → Attach policies directly** → marcar las 4 (o 5).
 2. **Security credentials → Create access key** → *Command Line Interface*.
 3. En la PC:
    ```powershell

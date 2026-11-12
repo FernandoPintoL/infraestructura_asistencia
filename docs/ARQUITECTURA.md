@@ -40,7 +40,7 @@ flowchart LR
 |---|---|---|
 | **Terraform / OpenTofu** | Motor principal: red, firewalls, roles IAM, secretos, 3 EC2 por tenant, suspender (detener instancias). Además el bucket de estado (`bootstrap/`) y el servidor de monitoreo | `infraestructura/terraform` |
 | **Pulumi** | Segunda implementación del mismo tenant, elegible por tenant (RF-08) | `infraestructura/pulumi/tenant` |
-| **CloudFormation** | Comparación técnica (versión de 1 tenant) | `cloudformation/`, [comparación](COMPARACION-MOTORES.md) |
+| **CloudFormation** | Tercera implementación del mismo tenant, elegible por tenant; la plataforma completa lo que la pila no puede (secretos, `.env`, suspender) | `cloudformation/tenant`, [comparación](COMPARACION-MOTORES.md) |
 | **cloud-init** | Configuración inicial de cada VM en su primer arranque: lee sus secretos de SSM, clona la app, migra, enciende servicios | `infraestructura/terraform/tenant/cloud-init` |
 | **Packer** | Imagen base (AMI) con todo lo común ya instalado y endurecido: arranques de 1–3 min | `infraestructura/packer` |
 | **Ansible** | Configuración posterior de la flota: endurecimiento, PostgreSQL según la memoria, actualizaciones masivas, verificación de salud; inventario dinámico por etiquetas, conexión por SSM | `infraestructura/ansible` |
@@ -118,7 +118,7 @@ anterior; si el motor llegó a ejecutarse, queda en `ERROR` para revisar y reint
 | Secretos | SSM `/asistencia/<tenant>/<entorno>/…`; el rol IAM de cada instancia solo lee su ruta y su servicio | `probar_aislamiento` (Secretos) |
 | Respaldos | Prefijo S3 `tenants/<tenant>/<entorno>/`; solo el rol de la db de ese tenant escribe ahí | `probar_aislamiento` (Respaldos) |
 | Aplicación | `SECRET_KEY` distinta por tenant: un token de un tenant no vale en otro | `probar_aislamiento` (Aplicación) |
-| Estado de IaC | Una key (Terraform) o pila (Pulumi) por tenant: un error o `destroy` no toca a otros | — |
+| Estado de IaC | Una key (Terraform) o pila (Pulumi, CloudFormation) por tenant: un error o `destroy` no toca a otros | — |
 | Métricas | Puertos de métricas abiertos solo al security group del monitoreo | — |
 | Plataforma | El admin de un tenant solo ve sus tenants, operaciones, respaldos y alertas | pruebas automáticas del backend |
 
