@@ -9,8 +9,22 @@ packages:
   - prometheus-node-exporter      # CPU, memoria y disco (ya vienen en la AMI de Packer)
   - prometheus-postgres-exporter  # estado de la base para Grafana
 
+write_files:
+  # AWS CLI en /snap/bin/aws. Primero snap (ya viene en la AMI de Packer); si la tienda de
+  # snaps no responde, el instalador oficial de AWS.
+  - path: /usr/local/sbin/instalar-aws-cli
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      [ -x /snap/bin/aws ] && exit 0
+      for i in 1 2 3; do snap install aws-cli --classic && exit 0; sleep 10; done
+      cd /tmp && curl -fsSL --retry 5 -o awscliv2.zip https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip
+      python3 -m zipfile -e awscliv2.zip /tmp/ && chmod -R +x /tmp/aws
+      /tmp/aws/install --update --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli
+      mkdir -p /snap/bin && ln -sf /usr/local/bin/aws /snap/bin/aws
+
 runcmd:
-  - snap list aws-cli >/dev/null 2>&1 || snap install aws-cli --classic  # ya viene en la AMI de Packer
+  - /usr/local/sbin/instalar-aws-cli
   - |
     set -e
     # Contraseña de la base (reintenta por si el rol IAM aún se está propagando)
