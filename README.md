@@ -49,7 +49,7 @@ backend y el frontend desde GitHub, así que la versión que se despliega es la 
 | 5 | Tablero de Grafana con métricas y alertas | [monitoreo/README.md](terraform/monitoreo/README.md) · [tablero](terraform/monitoreo/config/grafana/dashboards/tenants.json) · [reglas](terraform/monitoreo/config/grafana/provisioning/alerting/reglas.yml) |
 | 6 | Instrucciones de operación | [docs/OPERACIONES.md](docs/OPERACIONES.md) |
 | 7 | Evidencia de aislamiento entre tenants | `manage.py probar_aislamiento` → `docs/evidencia-aislamiento.md` · [cómo](docs/OPERACIONES.md#probar-el-aislamiento-entre-tenants-entregable-7) |
-| 8 | Demostración y diseño | [docs/GUIA-DEMO.md](docs/GUIA-DEMO.md) · [comparación de motores](docs/COMPARACION-MOTORES.md) |
+| 8 | Demostración y diseño | [docs/GUIA-DEMO.md](docs/GUIA-DEMO.md) · [comparación de motores](docs/COMPARACION-MOTORES.md) · [Terraform en el proyecto (exposición)](docs/EXPOSICION-TERRAFORM.md) |
 
 ## Requisitos → implementación
 
