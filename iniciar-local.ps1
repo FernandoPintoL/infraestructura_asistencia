@@ -23,7 +23,7 @@ $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [En
 # Igual con la frase de Pulumi, si se guardó como variable del usuario
 $frase = [Environment]::GetEnvironmentVariable("PULUMI_CONFIG_PASSPHRASE", "User")
 if ($frase) { $env:PULUMI_CONFIG_PASSPHRASE = $frase }
-foreach ($programa in "terraform", "pulumi") {
+foreach ($programa in "terraform", "tofu", "pulumi") {
     if (-not (Get-Command $programa -ErrorAction SilentlyContinue)) { Write-Host "Aviso: no se encontró «$programa» (el motor que lo usa fallará)." -ForegroundColor Yellow }
 }
 
