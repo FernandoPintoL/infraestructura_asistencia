@@ -55,6 +55,20 @@ resource "aws_security_group" "frontend" {
     }
   }
 
+  # Métricas (solo el servidor de monitoreo). Van EN LÍNEA como las demás reglas: si fueran
+  # recursos aparte, Terraform/OpenTofu las borraría en el siguiente apply (las reglas en línea
+  # se toman como la lista completa del grupo).
+  dynamic "ingress" {
+    for_each = local.metricas["frontend"]
+    content {
+      description     = "Monitoreo: ${ingress.value.que}"
+      from_port       = ingress.value.puerto
+      to_port         = ingress.value.puerto
+      protocol        = "tcp"
+      security_groups = [var.monitoreo_sg_id]
+    }
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -86,6 +100,20 @@ resource "aws_security_group" "backend" {
       to_port     = 22
       protocol    = "tcp"
       cidr_blocks = var.ssh_cidrs
+    }
+  }
+
+  # Métricas (solo el servidor de monitoreo). Van EN LÍNEA como las demás reglas: si fueran
+  # recursos aparte, Terraform/OpenTofu las borraría en el siguiente apply (las reglas en línea
+  # se toman como la lista completa del grupo).
+  dynamic "ingress" {
+    for_each = local.metricas["backend"]
+    content {
+      description     = "Monitoreo: ${ingress.value.que}"
+      from_port       = ingress.value.puerto
+      to_port         = ingress.value.puerto
+      protocol        = "tcp"
+      security_groups = [var.monitoreo_sg_id]
     }
   }
 
@@ -124,6 +152,20 @@ resource "aws_security_group" "db" {
     }
   }
 
+  # Métricas (solo el servidor de monitoreo). Van EN LÍNEA como las demás reglas: si fueran
+  # recursos aparte, Terraform/OpenTofu las borraría en el siguiente apply (las reglas en línea
+  # se toman como la lista completa del grupo).
+  dynamic "ingress" {
+    for_each = local.metricas["db"]
+    content {
+      description     = "Monitoreo: ${ingress.value.que}"
+      from_port       = ingress.value.puerto
+      to_port         = ingress.value.puerto
+      protocol        = "tcp"
+      security_groups = [var.monitoreo_sg_id]
+    }
+  }
+
   egress {
     description = "Salida a internet (paquetes, SSM)"
     from_port   = 0
@@ -147,24 +189,22 @@ resource "aws_eip" "frontend" {
 # ───────────── Métricas: solo el servidor de monitoreo (Prometheus) puede leerlas ─────────────
 #   node_exporter :9100 en las 3 instancias · postgres_exporter :9187 en la db
 #   /metrics de Django por el puerto 80 del backend
+# Las reglas están en línea dentro de cada security group (ver arriba).
 
 locals {
-  puertos_metricas = var.monitoreo_sg_id == "" ? {} : {
-    frontend-node = { sg = aws_security_group.frontend.id, puerto = 9100, que = "node_exporter" }
-    backend-node  = { sg = aws_security_group.backend.id, puerto = 9100, que = "node_exporter" }
-    db-node       = { sg = aws_security_group.db.id, puerto = 9100, que = "node_exporter" }
-    db-postgres   = { sg = aws_security_group.db.id, puerto = 9187, que = "postgres_exporter" }
-    backend-app   = { sg = aws_security_group.backend.id, puerto = 80, que = "metricas de Django" }
+  metricas = var.monitoreo_sg_id == "" ? { frontend = [], backend = [], db = [] } : {
+    frontend = [{ puerto = 9100, que = "node_exporter" }]
+    backend  = [{ puerto = 9100, que = "node_exporter" }, { puerto = 80, que = "metricas de Django" }]
+    db       = [{ puerto = 9100, que = "node_exporter" }, { puerto = 9187, que = "postgres_exporter" }]
   }
 }
 
-resource "aws_vpc_security_group_ingress_rule" "metricas" {
-  for_each = local.puertos_metricas
+# Antes eran recursos aparte (y se borraban en el segundo apply). Se quitan del estado sin
+# tocar AWS: el security group ahora las crea o las conserva en línea.
+removed {
+  from = aws_vpc_security_group_ingress_rule.metricas
 
-  security_group_id            = each.value.sg
-  referenced_security_group_id = var.monitoreo_sg_id
-  ip_protocol                  = "tcp"
-  from_port                    = each.value.puerto
-  to_port                      = each.value.puerto
-  description                  = "Monitoreo: ${each.value.que}"
+  lifecycle {
+    destroy = false
+  }
 }
