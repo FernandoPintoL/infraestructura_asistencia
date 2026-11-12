@@ -1,0 +1,224 @@
+# Reglas de alerta (RF-28). Cada una se evalúa por tenant y entorno: una alerta dice a quién afecta.
+# La plataforma las lee de la API de Grafana y las muestra con su tenant y hora de detección (RF-29).
+#
+# Severidad: critica = el servicio no funciona · aviso = funciona, pero hay que actuar pronto.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: tenants
+    folder: Asistencia
+    interval: 1m
+    rules:
+      # ───────────── El servicio deja de responder ─────────────
+      - uid: asis-app-no-responde
+        title: La aplicación no responde
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels: { severidad: critica }
+        annotations:
+          summary: "La aplicación de {{ $labels.tenant }} ({{ $labels.entorno }}) no responde"
+          description: "La prueba de punta a punta (frontend → API → base de datos) falla hace más de 2 minutos."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model: { refId: A, instant: true, expr: 'min by (tenant, entorno) (probe_success{job="disponibilidad"})' }
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: lt, params: [1] } }] }
+
+      - uid: asis-servicio-sin-respuesta
+        title: Un servicio no responde a las métricas
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        labels: { severidad: critica }
+        annotations:
+          summary: "{{ $labels.servicio }} de {{ $labels.tenant }} ({{ $labels.entorno }}) no responde ({{ $labels.job }})"
+          description: "Prometheus no puede leer las métricas: la instancia o el proceso están caídos."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model: { refId: A, instant: true, expr: 'min by (tenant, entorno, servicio, job) (up{job=~"node|postgres|django"})' }
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: lt, params: [1] } }] }
+
+      - uid: asis-base-caida
+        title: La base de datos no está disponible
+        condition: C
+        for: 1m
+        noDataState: OK
+        execErrState: Error
+        labels: { severidad: critica }
+        annotations:
+          summary: "PostgreSQL de {{ $labels.tenant }} ({{ $labels.entorno }}) no está disponible"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model: { refId: A, instant: true, expr: 'min by (tenant, entorno) (pg_up)' }
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: lt, params: [1] } }] }
+
+      # ───────────── Aumentan los errores o la lentitud ─────────────
+      - uid: asis-errores-backend
+        title: Aumentaron los errores del backend
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: { severidad: critica }
+        annotations:
+          summary: "{{ $labels.tenant }} ({{ $labels.entorno }}): {{ $values.A.Value | printf \"%.1f\" }} % de respuestas con error 5xx"
+          description: "Más del 5 % de las peticiones al backend terminan en error del servidor (últimos 5 minutos)."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                100 * sum by (tenant, entorno) (rate(asistencia_http_peticiones_total{estado="5xx"}[5m]))
+                / sum by (tenant, entorno) (rate(asistencia_http_peticiones_total[5m]))
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [5] } }] }
+
+      - uid: asis-latencia-alta
+        title: El backend responde lento
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: { severidad: aviso }
+        annotations:
+          summary: "{{ $labels.tenant }} ({{ $labels.entorno }}): el 5 % de las peticiones tarda más de {{ $values.A.Value | printf \"%.2f\" }} s"
+          description: "La latencia p95 supera 1 segundo hace 10 minutos. Considera un plan con más capacidad."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: histogram_quantile(0.95, sum by (le, tenant, entorno) (rate(asistencia_http_latencia_segundos_bucket[5m])))
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [1] } }] }
+
+      # ───────────── Se alcanzan límites de recursos ─────────────
+      - uid: asis-cpu-alta
+        title: CPU alta
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: { severidad: aviso }
+        annotations:
+          summary: "{{ $labels.servicio }} de {{ $labels.tenant }} ({{ $labels.entorno }}) usa {{ $values.A.Value | printf \"%.0f\" }} % de CPU"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: 100 - 100 * avg by (tenant, entorno, servicio) (rate(node_cpu_seconds_total{mode="idle"}[5m]))
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [85] } }] }
+
+      - uid: asis-memoria-alta
+        title: Memoria casi agotada
+        condition: C
+        for: 10m
+        noDataState: OK
+        execErrState: Error
+        labels: { severidad: aviso }
+        annotations:
+          summary: "{{ $labels.servicio }} de {{ $labels.tenant }} ({{ $labels.entorno }}) usa {{ $values.A.Value | printf \"%.0f\" }} % de memoria"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 900, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: 100 * (1 - max by (tenant, entorno, servicio) (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes))
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [90] } }] }
+
+      - uid: asis-disco-lleno
+        title: Disco casi lleno
+        condition: C
+        for: 5m
+        noDataState: OK
+        execErrState: Error
+        labels: { severidad: critica }
+        annotations:
+          summary: "Disco de {{ $labels.servicio }} de {{ $labels.tenant }} ({{ $labels.entorno }}) al {{ $values.A.Value | printf \"%.0f\" }} %"
+          description: "Si es la base de datos, el cambio a un plan mayor amplía el disco sin perder datos."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 600, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                100 * (1 - max by (tenant, entorno, servicio) (node_filesystem_avail_bytes{mountpoint="/"}
+                / node_filesystem_size_bytes{mountpoint="/"}))
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [85] } }] }
+
+      - uid: asis-limite-modulos
+        title: Límite de módulos del plan alcanzado
+        condition: C
+        for: 1m
+        noDataState: OK
+        execErrState: Error
+        labels: { severidad: aviso }
+        annotations:
+          summary: "{{ $labels.tenant }} ({{ $labels.entorno }}) usa todos los módulos de su plan"
+          description: "No podrá importar módulos nuevos hasta eliminar uno o cambiar a un plan mayor."
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: max by (tenant, entorno) (100 * asistencia_uso_modulos / (asistencia_limite_modulos > 0))
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [99] } }] }
+
+      - uid: asis-limite-estudiantes
+        title: Cerca del límite de estudiantes del plan
+        condition: C
+        for: 1m
+        noDataState: OK
+        execErrState: Error
+        labels: { severidad: aviso }
+        annotations:
+          summary: "{{ $labels.tenant }} ({{ $labels.entorno }}) usa el {{ $values.A.Value | printf \"%.0f\" }} % de los estudiantes de su plan"
+        data:
+          - refId: A
+            relativeTimeRange: { from: 300, to: 0 }
+            datasourceUid: prometheus
+            model:
+              refId: A
+              instant: true
+              expr: max by (tenant, entorno) (100 * asistencia_uso_estudiantes / (asistencia_limite_estudiantes > 0))
+          - refId: C
+            datasourceUid: __expr__
+            model: { refId: C, type: threshold, expression: A, conditions: [{ evaluator: { type: gt, params: [90] } }] }

@@ -1,0 +1,9 @@
+name: asistencia-tenant
+description: Un tenant del sistema de asistencia (3 EC2) — segunda implementación del motor (RF-08)
+runtime:
+  name: python
+  options:
+    toolchain: pip
+    virtualenv: venv
+# El estado NO es local: la plataforma define PULUMI_BACKEND_URL (s3://<bucket de estado>/pulumi)
+# y una pila por tenant y entorno: <tenant_id>-<entorno>.

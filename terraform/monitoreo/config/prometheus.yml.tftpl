@@ -1,0 +1,103 @@
+# Prometheus: descubre las instancias de los tenants por sus etiquetas EC2 (las pone Terraform)
+# y les copia como etiquetas: tenant, entorno, servicio, plan. Así Grafana filtra por tenant
+# y por entorno (RF-27) sin configurar nada al crear un tenant nuevo.
+global:
+  scrape_interval: 30s
+  evaluation_interval: 30s
+
+scrape_configs:
+  # CPU, memoria, disco de las 3 instancias de cada tenant
+  - job_name: node
+    ec2_sd_configs:
+      - region: ${region}
+        port: 9100
+        filters: &tenants
+          - name: tag:Proyecto
+            values: [asistencia]
+          - name: tag-key          # solo instancias de tenants (Terraform o Pulumi)
+            values: [Tenant]
+          - name: instance-state-name
+            values: [running]
+    relabel_configs:
+      - source_labels: [__meta_ec2_tag_Tenant]
+        target_label: tenant
+      - source_labels: [__meta_ec2_tag_Entorno]
+        target_label: entorno
+      - source_labels: [__meta_ec2_tag_Servicio]
+        target_label: servicio
+      - source_labels: [__meta_ec2_tag_Plan]
+        target_label: plan
+      - source_labels: [__meta_ec2_instance_id]
+        target_label: instancia
+
+  # Estado de PostgreSQL (solo instancias db)
+  - job_name: postgres
+    ec2_sd_configs:
+      - region: ${region}
+        port: 9187
+        filters: *tenants
+    relabel_configs:
+      - source_labels: [__meta_ec2_tag_Servicio]
+        regex: db
+        action: keep
+      - source_labels: [__meta_ec2_tag_Tenant]
+        target_label: tenant
+      - source_labels: [__meta_ec2_tag_Entorno]
+        target_label: entorno
+      - source_labels: [__meta_ec2_tag_Servicio]
+        target_label: servicio
+      - source_labels: [__meta_ec2_tag_Plan]
+        target_label: plan
+      - source_labels: [__meta_ec2_instance_id]
+        target_label: instancia
+
+  # Latencia, errores y uso del plan de Django (solo backends)
+  - job_name: django
+    metrics_path: /metrics
+    ec2_sd_configs:
+      - region: ${region}
+        port: 80
+        filters: *tenants
+    relabel_configs:
+      - source_labels: [__meta_ec2_tag_Servicio]
+        regex: backend
+        action: keep
+      - source_labels: [__meta_ec2_tag_Tenant]
+        target_label: tenant
+      - source_labels: [__meta_ec2_tag_Entorno]
+        target_label: entorno
+      - source_labels: [__meta_ec2_tag_Servicio]
+        target_label: servicio
+      - source_labels: [__meta_ec2_tag_Plan]
+        target_label: plan
+      - source_labels: [__meta_ec2_instance_id]
+        target_label: instancia
+
+  # Disponibilidad de punta a punta: frontend → backend → base (como un usuario real)
+  - job_name: disponibilidad
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    ec2_sd_configs:
+      - region: ${region}
+        port: 80
+        filters: *tenants
+    relabel_configs:
+      - source_labels: [__meta_ec2_tag_Servicio]
+        regex: frontend
+        action: keep
+      # IP pública (la IP elástica): prueba el mismo camino que un usuario y Django la acepta
+      # (ALLOWED_HOSTS solo tiene la IP pública; por la privada respondería 400).
+      - source_labels: [__meta_ec2_public_ip]
+        target_label: __param_target
+        replacement: http://$1/api/modulo-activo/
+      - target_label: __address__
+        replacement: 127.0.0.1:9115
+      - source_labels: [__meta_ec2_tag_Tenant]
+        target_label: tenant
+      - source_labels: [__meta_ec2_tag_Entorno]
+        target_label: entorno
+      - source_labels: [__meta_ec2_tag_Plan]
+        target_label: plan
+      - source_labels: [__meta_ec2_instance_id]
+        target_label: instancia

@@ -1,0 +1,22 @@
+# Carpetas de trabajo de Terraform/OpenTofu (una por tenant, ver tenant.ps1)
+.terraform/
+.terraform-tenants/
+
+# Estado: el de los tenants vive en S3; el de bootstrap/ es local y no se sube
+*.tfstate
+*.tfstate.*
+
+# Planes guardados (pueden contener secretos)
+*.tfplan
+tfplan
+
+# Generados por bootstrap/ (contienen el ID de la cuenta)
+tenant/backend.hcl
+tenant/respaldos.auto.tfvars
+tenant/monitoreo.auto.tfvars
+
+# IP de administración (personal)
+monitoreo/acceso.auto.tfvars
+
+# Llaves descargadas de SSM
+*.pem

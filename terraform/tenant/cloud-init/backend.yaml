@@ -1,0 +1,130 @@
+#cloud-config
+# Instancia de BACKEND del tenant: Django detrás de Gunicorn y Nginx.
+# Terraform reemplaza las variables entre llaves (región, prefijo SSM, repositorio,
+# versión, usuario y correo del admin). No contiene secretos: el .env y la contraseña
+# del administrador se leen de SSM Parameter Store con el rol IAM de la instancia.
+
+packages:
+  - python3-venv
+  - git
+  - nginx
+  - postgresql-client
+  - prometheus-node-exporter
+
+write_files:
+  # Descarga el .env desde SSM. Lo ejecuta systemd ANTES de cada arranque de Gunicorn,
+  # así un cambio de plan (límites) o una reanudación toma siempre la versión vigente.
+  - path: /usr/local/sbin/asistencia-env
+    permissions: "0750"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+      umask 077
+      for intento in $(seq 1 30); do
+        if /snap/bin/aws ssm get-parameter --region "${region}" \
+            --name "${ssm_prefijo}/backend/env" --with-decryption \
+            --query Parameter.Value --output text > /etc/asistencia.env.tmp; then
+          install -m 640 -o root -g asistencia /etc/asistencia.env.tmp /etc/asistencia.env
+          rm -f /etc/asistencia.env.tmp
+          exit 0
+        fi
+        echo "Esperando acceso a SSM (intento $intento)..." >&2
+        sleep 10
+      done
+      exit 1
+
+  # Gunicorn como servicio. "+" ejecuta ExecStartPre como root (para leer SSM).
+  - path: /etc/systemd/system/asistencia.service
+    content: |
+      [Unit]
+      Description=Backend de asistencia (Gunicorn)
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      User=asistencia
+      WorkingDirectory=/opt/asistencia/app
+      ExecStartPre=+/usr/local/sbin/asistencia-env
+      # Métricas de los varios procesos de Gunicorn (la carpeta se vacía en cada reinicio)
+      RuntimeDirectory=asistencia-metricas
+      Environment=PROMETHEUS_MULTIPROC_DIR=/run/asistencia-metricas
+      ExecStart=/opt/asistencia/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8000 --workers 2
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+
+  # Nginx recibe en el puerto 80 (solo desde el frontend del tenant) y pasa a Gunicorn
+  - path: /etc/nginx/sites-available/asistencia
+    content: |
+      server {
+          listen 80 default_server;
+          server_name _;
+          client_max_body_size 10M;
+
+          location /static/ {
+              alias /opt/asistencia/app/staticfiles/;
+          }
+
+          # Métricas para Prometheus: solo desde la red privada (además el security group
+          # solo deja entrar al servidor de monitoreo). El frontend nunca reenvía /metrics.
+          location = /metrics {
+              allow ${vpc_cidr};
+              deny all;
+              proxy_pass http://127.0.0.1:8000;
+              proxy_set_header Host localhost;
+          }
+
+          location / {
+              proxy_pass http://127.0.0.1:8000;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+      }
+
+runcmd:
+  - snap list aws-cli >/dev/null 2>&1 || snap install aws-cli --classic  # ya viene en la AMI de Packer
+
+  # Usuario de sistema que ejecuta la aplicación
+  - useradd --system --create-home --home-dir /opt/asistencia --shell /usr/sbin/nologin asistencia
+  - chmod 755 /opt/asistencia
+
+  # Código (versión registrada en el despliegue) y dependencias
+  - git clone --branch "${app_version}" --depth 1 "${repo_url}" /opt/asistencia/app
+  - /usr/local/sbin/asistencia-env
+  - ln -s /etc/asistencia.env /opt/asistencia/app/.env
+  - python3 -m venv /opt/asistencia/venv
+  - /opt/asistencia/venv/bin/pip install --upgrade pip
+  - /opt/asistencia/venv/bin/pip install -r /opt/asistencia/app/requirements.txt
+  - chown -R asistencia:asistencia /opt/asistencia
+
+  # Esperar a la base de datos, migrar y crear el administrador
+  - |
+    set -a; . /etc/asistencia.env; set +a
+    until PGPASSWORD="$DB_PASSWORD" psql -h "$DB_HOST" -U "$DB_USER" -d "$DB_NAME" -c 'SELECT 1' >/dev/null 2>&1; do
+      echo "Esperando a la base de datos..."; sleep 10
+    done
+    cd /opt/asistencia/app
+    sudo -u asistencia /opt/asistencia/venv/bin/python manage.py migrate --noinput
+    sudo -u asistencia /opt/asistencia/venv/bin/python manage.py collectstatic --noinput
+    ADMIN_PASSWORD=$(/snap/bin/aws ssm get-parameter --region "${region}" \
+        --name "${ssm_prefijo}/backend/admin_password" --with-decryption \
+        --query Parameter.Value --output text)
+    # Si la instancia se reemplazó y el admin ya existe en la base, no falla
+    sudo -u asistencia env \
+      DJANGO_SUPERUSER_USERNAME='${admin_usuario}' \
+      DJANGO_SUPERUSER_PASSWORD="$ADMIN_PASSWORD" \
+      DJANGO_SUPERUSER_EMAIL='${contacto_email}' \
+      /opt/asistencia/venv/bin/python manage.py createsuperuser --noinput \
+      || echo "El administrador ya existía"
+    unset ADMIN_PASSWORD DB_PASSWORD SECRET_KEY
+
+  # Activar Gunicorn y Nginx
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/asistencia /etc/nginx/sites-enabled/asistencia
+  - systemctl daemon-reload
+  - systemctl enable --now asistencia
+  - systemctl restart nginx
+  - echo "BACKEND LISTO"

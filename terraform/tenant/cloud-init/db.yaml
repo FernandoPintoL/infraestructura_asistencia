@@ -1,0 +1,48 @@
+#cloud-config
+# Instancia de BASE DE DATOS del tenant: PostgreSQL con la base y el usuario de la app.
+# Terraform reemplaza las variables entre llaves (región, prefijo SSM, CIDR de la VPC).
+# No contiene secretos:
+# la contraseña se lee de SSM Parameter Store con el rol IAM de la instancia.
+
+packages:
+  - postgresql
+  - prometheus-node-exporter      # CPU, memoria y disco (ya vienen en la AMI de Packer)
+  - prometheus-postgres-exporter  # estado de la base para Grafana
+
+runcmd:
+  - snap list aws-cli >/dev/null 2>&1 || snap install aws-cli --classic  # ya viene en la AMI de Packer
+  - |
+    set -e
+    # Contraseña de la base (reintenta por si el rol IAM aún se está propagando)
+    until DB_PASSWORD=$(/snap/bin/aws ssm get-parameter --region "${region}" \
+        --name "${ssm_prefijo}/db/password" --with-decryption \
+        --query Parameter.Value --output text); do
+      echo "Esperando acceso a SSM..."; sleep 10
+    done
+
+    # En la AMI de Packer PostgreSQL viene apagado: solo la instancia db lo enciende
+    systemctl enable --now postgresql
+
+    # Escuchar en la red privada y aceptar conexiones con contraseña desde la VPC.
+    # El security group solo deja llegar al puerto 5432 al backend de ESTE tenant.
+    PG_DIR=$(ls -d /etc/postgresql/*/main | head -n 1)
+    echo "listen_addresses = '*'" >> "$PG_DIR/postgresql.conf"
+    echo "host asistencia_db asistencia ${vpc_cidr} scram-sha-256" >> "$PG_DIR/pg_hba.conf"
+    systemctl restart postgresql
+
+    # La contraseña pasa como variable de psql: no se escribe en ningún archivo
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -v pass="$DB_PASSWORD" <<'SQL'
+    CREATE USER asistencia WITH PASSWORD :'pass';
+    CREATE DATABASE asistencia_db OWNER asistencia;
+    REVOKE ALL ON DATABASE asistencia_db FROM PUBLIC;
+    SQL
+    unset DB_PASSWORD
+
+    # Exportador de PostgreSQL: entra por el socket local como el usuario del sistema
+    # "prometheus" (autenticación peer, sin contraseña) y solo lee estadísticas (pg_monitor)
+    sudo -u postgres psql -c "CREATE ROLE prometheus LOGIN" || true
+    sudo -u postgres psql -v ON_ERROR_STOP=1 -c "GRANT pg_monitor TO prometheus"
+    echo "DATA_SOURCE_NAME='user=prometheus host=/run/postgresql dbname=postgres'" > /etc/default/prometheus-postgres-exporter
+    systemctl enable prometheus-postgres-exporter
+    systemctl restart prometheus-postgres-exporter
+  - echo "BASE DE DATOS LISTA"

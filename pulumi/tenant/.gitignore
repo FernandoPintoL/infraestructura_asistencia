@@ -1,0 +1,6 @@
+# Entorno de Python del programa
+venv/
+__pycache__/
+.pytest_cache/
+# Configuración de pilas creada a mano (la plataforma usa su carpeta de trabajo)
+Pulumi.*.yaml

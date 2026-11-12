@@ -1,0 +1,42 @@
+# Inventario DINÁMICO: Ansible pregunta a AWS qué instancias existen en este momento.
+# No hay IPs escritas a mano; los grupos salen de las etiquetas que pone Terraform:
+#
+#   servicio_frontend · servicio_backend · servicio_db
+#   tenant_<id>       (los guiones se vuelven "_": tenant_colegio_demo)
+#   entorno_dev · entorno_staging · entorno_prod
+#   plan_basico · plan_estandar · plan_avanzado
+#
+# Ejemplos de --limit:
+#   -l tenant_colegio_demo                     un tenant (sus 3 instancias)
+#   -l 'servicio_backend:&entorno_prod'        todos los backends de producción
+#   -l 'plan_avanzado:&servicio_db'            las bases de los tenants Avanzado
+#
+#   ansible-inventory --graph                  ver los grupos
+
+plugin: amazon.aws.aws_ec2
+regions:
+  - us-east-1
+
+filters:
+  tag:Proyecto: asistencia
+  tag-key: Tenant                # solo instancias de tenants (creadas con Terraform o Pulumi)
+  instance-state-name: running   # los tenants suspendidos no aparecen
+
+# La conexión es por SSM: el "host" es el ID de la instancia, no una IP
+hostnames:
+  - instance-id
+
+keyed_groups:
+  - key: tags.Servicio
+    prefix: servicio
+  - key: tags.Tenant
+    prefix: tenant
+  - key: tags.Entorno
+    prefix: entorno
+  - key: tags.Plan
+    prefix: plan
+
+compose:
+  ansible_host: instance_id
+  tenant: tags.Tenant
+  servicio: tags.Servicio

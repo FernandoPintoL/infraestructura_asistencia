@@ -1,0 +1,921 @@
+{
+ "uid": "asistencia-tenants",
+ "title": "Asistencia · Salud de los tenants",
+ "description": "Disponibilidad, CPU, memoria, latencia, errores y base de datos de cada tenant (RF-25 a RF-27).",
+ "tags": [
+  "asistencia",
+  "tenants"
+ ],
+ "timezone": "browser",
+ "editable": false,
+ "refresh": "30s",
+ "time": {
+  "from": "now-6h",
+  "to": "now"
+ },
+ "schemaVersion": 39,
+ "templating": {
+  "list": [
+   {
+    "name": "entorno",
+    "label": "Entorno",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "prometheus"
+    },
+    "refresh": 2,
+    "query": {
+     "query": "label_values(up, entorno)",
+     "refId": "entorno"
+    },
+    "definition": "label_values(up, entorno)",
+    "includeAll": true,
+    "multi": true,
+    "allValue": ".*",
+    "current": {
+     "selected": true,
+     "text": [
+      "All"
+     ],
+     "value": [
+      "$__all"
+     ]
+    },
+    "sort": 1
+   },
+   {
+    "name": "tenant",
+    "label": "Tenant",
+    "type": "query",
+    "datasource": {
+     "type": "prometheus",
+     "uid": "prometheus"
+    },
+    "refresh": 2,
+    "query": {
+     "query": "label_values(up{entorno=~\"$entorno\"}, tenant)",
+     "refId": "tenant"
+    },
+    "definition": "label_values(up{entorno=~\"$entorno\"}, tenant)",
+    "includeAll": true,
+    "multi": true,
+    "allValue": ".*",
+    "current": {
+     "selected": true,
+     "text": [
+      "All"
+     ],
+     "value": [
+      "$__all"
+     ]
+    },
+    "sort": 1
+   }
+  ]
+ },
+ "panels": [
+  {
+   "id": 1,
+   "type": "row",
+   "title": "Salud (disponibilidad y estado de los servicios)",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 0,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 2,
+   "type": "stat",
+   "title": "Disponibilidad en el período",
+   "description": "Porcentaje de pruebas de punta a punta (frontend → API → base) que respondieron bien.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 1,
+    "w": 10,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "100 * avg by (tenant, entorno) (avg_over_time(probe_success{job=\"disponibilidad\", tenant=~\"$tenant\", entorno=~\"$entorno\"}[$__range]))",
+     "legendFormat": "{{tenant}} · {{entorno}}",
+     "instant": true
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "decimals": 2,
+     "min": 0,
+     "max": 100,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 99
+       },
+       {
+        "color": "green",
+        "value": 99.9
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "textMode": "value_and_name"
+   }
+  },
+  {
+   "id": 3,
+   "type": "alertlist",
+   "title": "Alertas activas",
+   "description": "Alertas que están disparadas ahora. La plataforma también las muestra en su sección Alertas.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 10,
+    "y": 1,
+    "w": 14,
+    "h": 6
+   },
+   "targets": [],
+   "fieldConfig": {
+    "defaults": {},
+    "overrides": []
+   },
+   "options": {
+    "viewMode": "list",
+    "groupMode": "default",
+    "maxItems": 20,
+    "sortOrder": 1,
+    "stateFilter": {
+     "firing": true,
+     "pending": true,
+     "noData": false,
+     "normal": false,
+     "error": true
+    },
+    "alertInstanceLabelFilter": "",
+    "dashboardAlerts": false,
+    "showInstances": true
+   }
+  },
+  {
+   "id": 4,
+   "type": "stat",
+   "title": "Estado de cada servicio",
+   "description": "Arriba = Prometheus puede leer sus métricas.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 7,
+    "w": 24,
+    "h": 5
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "up{job=~\"node|postgres|django\", tenant=~\"$tenant\", entorno=~\"$entorno\"}",
+     "legendFormat": "{{tenant}} · {{servicio}} · {{job}}",
+     "instant": true
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "mappings": [
+      {
+       "type": "value",
+       "options": {
+        "0": {
+         "text": "Caído",
+         "color": "red"
+        },
+        "1": {
+         "text": "Arriba",
+         "color": "green"
+        }
+       }
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "textMode": "value_and_name"
+   }
+  },
+  {
+   "id": 5,
+   "type": "row",
+   "title": "Uso de recursos (CPU, memoria, disco)",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 12,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 6,
+   "type": "timeseries",
+   "title": "CPU",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 13,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "100 - 100 * avg by (tenant, servicio) (rate(node_cpu_seconds_total{mode=\"idle\", tenant=~\"$tenant\", entorno=~\"$entorno\"}[5m]))",
+     "legendFormat": "{{tenant}} · {{servicio}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never"
+     },
+     "min": 0,
+     "max": 100
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 7,
+   "type": "timeseries",
+   "title": "Memoria",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 13,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "100 * (1 - node_memory_MemAvailable_bytes{tenant=~\"$tenant\", entorno=~\"$entorno\"} / node_memory_MemTotal_bytes{tenant=~\"$tenant\", entorno=~\"$entorno\"})",
+     "legendFormat": "{{tenant}} · {{servicio}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never"
+     },
+     "min": 0,
+     "max": 100
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 8,
+   "type": "timeseries",
+   "title": "Disco raíz",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 13,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "100 * (1 - node_filesystem_avail_bytes{mountpoint=\"/\", tenant=~\"$tenant\", entorno=~\"$entorno\"} / node_filesystem_size_bytes{mountpoint=\"/\", tenant=~\"$tenant\", entorno=~\"$entorno\"})",
+     "legendFormat": "{{tenant}} · {{servicio}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never"
+     },
+     "min": 0,
+     "max": 100
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 9,
+   "type": "row",
+   "title": "Backend (latencia, tráfico y errores)",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 21,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 10,
+   "type": "timeseries",
+   "title": "Latencia p95",
+   "description": "El 95 % de las peticiones responde en menos de este tiempo.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 22,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "histogram_quantile(0.95, sum by (le, tenant) (rate(asistencia_http_latencia_segundos_bucket{tenant=~\"$tenant\", entorno=~\"$entorno\"}[5m])))",
+     "legendFormat": "{{tenant}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "s",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 11,
+   "type": "timeseries",
+   "title": "Peticiones por segundo",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 8,
+    "y": 22,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (tenant, estado) (rate(asistencia_http_peticiones_total{tenant=~\"$tenant\", entorno=~\"$entorno\"}[5m]))",
+     "legendFormat": "{{tenant}} · {{estado}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "reqps",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 12,
+   "type": "timeseries",
+   "title": "Errores del backend (5xx)",
+   "description": "Porcentaje de respuestas con error del servidor. La alerta se dispara sobre 5 %.",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 16,
+    "y": 22,
+    "w": 8,
+    "h": 8
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "100 * sum by (tenant) (rate(asistencia_http_peticiones_total{estado=\"5xx\", tenant=~\"$tenant\", entorno=~\"$entorno\"}[5m])) / sum by (tenant) (rate(asistencia_http_peticiones_total{tenant=~\"$tenant\", entorno=~\"$entorno\"}[5m]))",
+     "legendFormat": "{{tenant}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never"
+     },
+     "min": 0
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 13,
+   "type": "row",
+   "title": "Base de datos",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 30,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 14,
+   "type": "stat",
+   "title": "PostgreSQL",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 31,
+    "w": 6,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "pg_up{tenant=~\"$tenant\", entorno=~\"$entorno\"}",
+     "legendFormat": "{{tenant}}",
+     "instant": true
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "mappings": [
+      {
+       "type": "value",
+       "options": {
+        "0": {
+         "text": "Caído",
+         "color": "red"
+        },
+        "1": {
+         "text": "Arriba",
+         "color": "green"
+        }
+       }
+      }
+     ],
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "red",
+        "value": null
+       },
+       {
+        "color": "green",
+        "value": 1
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    },
+    "colorMode": "background",
+    "textMode": "value_and_name"
+   }
+  },
+  {
+   "id": 15,
+   "type": "timeseries",
+   "title": "Conexiones abiertas",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 6,
+    "y": 31,
+    "w": 9,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "sum by (tenant) (pg_stat_database_numbackends{datname=\"asistencia_db\", tenant=~\"$tenant\", entorno=~\"$entorno\"})",
+     "legendFormat": "{{tenant}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 16,
+   "type": "timeseries",
+   "title": "Tamaño de la base",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 15,
+    "y": 31,
+    "w": 9,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "pg_database_size_bytes{datname=\"asistencia_db\", tenant=~\"$tenant\", entorno=~\"$entorno\"}",
+     "legendFormat": "{{tenant}}"
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "bytes",
+     "custom": {
+      "lineWidth": 2,
+      "fillOpacity": 10,
+      "showPoints": "never"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "legend": {
+     "displayMode": "list",
+     "placement": "bottom",
+     "showLegend": true
+    },
+    "tooltip": {
+     "mode": "multi",
+     "sort": "desc"
+    }
+   }
+  },
+  {
+   "id": 17,
+   "type": "row",
+   "title": "Uso del plan",
+   "collapsed": false,
+   "gridPos": {
+    "x": 0,
+    "y": 37,
+    "w": 24,
+    "h": 1
+   },
+   "panels": []
+  },
+  {
+   "id": 18,
+   "type": "bargauge",
+   "title": "Módulos usados del plan",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 0,
+    "y": 38,
+    "w": 12,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "100 * asistencia_uso_modulos{tenant=~\"$tenant\", entorno=~\"$entorno\"} / (asistencia_limite_modulos{tenant=~\"$tenant\", entorno=~\"$entorno\"} > 0)",
+     "legendFormat": "{{tenant}} · {{plan}}",
+     "instant": true
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "min": 0,
+     "max": 100,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 80
+       },
+       {
+        "color": "red",
+        "value": 100
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "gradient",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   }
+  },
+  {
+   "id": 19,
+   "type": "bargauge",
+   "title": "Estudiantes del módulo activo vs. plan",
+   "description": "",
+   "datasource": {
+    "type": "prometheus",
+    "uid": "prometheus"
+   },
+   "gridPos": {
+    "x": 12,
+    "y": 38,
+    "w": 12,
+    "h": 6
+   },
+   "targets": [
+    {
+     "refId": "A",
+     "datasource": {
+      "type": "prometheus",
+      "uid": "prometheus"
+     },
+     "expr": "100 * asistencia_uso_estudiantes{tenant=~\"$tenant\", entorno=~\"$entorno\"} / (asistencia_limite_estudiantes{tenant=~\"$tenant\", entorno=~\"$entorno\"} > 0)",
+     "legendFormat": "{{tenant}} · {{plan}}",
+     "instant": true
+    }
+   ],
+   "fieldConfig": {
+    "defaults": {
+     "unit": "percent",
+     "min": 0,
+     "max": 100,
+     "thresholds": {
+      "mode": "absolute",
+      "steps": [
+       {
+        "color": "green",
+        "value": null
+       },
+       {
+        "color": "orange",
+        "value": 80
+       },
+       {
+        "color": "red",
+        "value": 100
+       }
+      ]
+     },
+     "color": {
+      "mode": "thresholds"
+     }
+    },
+    "overrides": []
+   },
+   "options": {
+    "orientation": "horizontal",
+    "displayMode": "gradient",
+    "reduceOptions": {
+     "calcs": [
+      "lastNotNull"
+     ]
+    }
+   }
+  }
+ ]
+}

@@ -1,0 +1,101 @@
+# Revisa la salud de las instancias de los tenants. No cambia nada.
+#
+#   ansible-playbook verificar.yml                         # toda la flota
+#   ansible-playbook verificar.yml -l tenant_colegio_demo  # un tenant
+#
+# Falla (en rojo) la instancia que tenga un servicio caído o el disco casi lleno.
+
+- name: Estado general de cada instancia
+  hosts: all
+  become: true
+
+  tasks:
+    - name: Servicios del sistema
+      ansible.builtin.service_facts:
+
+    - name: Imagen con la que nació (Packer)
+      ansible.builtin.command: cat /etc/asistencia-imagen
+      register: imagen
+      changed_when: false
+      failed_when: false
+
+    - name: Disco raíz
+      ansible.builtin.set_fact:
+        disco_pct: "{{ ((1 - (raiz.size_available / raiz.size_total)) * 100) | round(1) }}"
+      vars:
+        raiz: "{{ ansible_mounts | selectattr('mount', 'equalto', '/') | first }}"
+
+    - name: Resumen
+      ansible.builtin.debug:
+        msg:
+          - "Tenant {{ tenant }} · servicio {{ servicio }} · {{ ansible_facts.processor_vcpus }} vCPU · {{ ansible_memtotal_mb }} MB"
+          - "Disco usado: {{ disco_pct }} %  ·  memoria libre: {{ ansible_memfree_mb }} MB"
+          - "Imagen: {{ imagen.stdout_lines[1] | default('Ubuntu sin Packer') }}"
+
+    - name: El disco no está casi lleno
+      ansible.builtin.assert:
+        that: disco_pct | float < 85
+        fail_msg: "Disco al {{ disco_pct }} %"
+        quiet: true
+
+    - name: Exportador de métricas activo
+      ansible.builtin.assert:
+        that: ansible_facts.services['prometheus-node-exporter.service'].state | default('') == 'running'
+        fail_msg: node_exporter no está corriendo (ejecuta configurar.yml)
+        quiet: true
+
+
+- name: Backend
+  hosts: servicio_backend
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Gunicorn y Nginx activos
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.services['asistencia.service'].state == 'running'
+          - ansible_facts.services['nginx.service'].state == 'running'
+        quiet: true
+
+    - name: La API responde
+      ansible.builtin.uri:
+        url: http://127.0.0.1/api/modulo-activo/
+
+
+- name: Frontend
+  hosts: servicio_frontend
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Nginx activo
+      ansible.builtin.assert:
+        that: ansible_facts.services['nginx.service'].state == 'running'
+        quiet: true
+
+    - name: La aplicación y el proxy a la API responden
+      ansible.builtin.uri:
+        url: "http://127.0.0.1{{ item }}"
+      loop: [/, /api/modulo-activo/]
+
+
+- name: Base de datos
+  hosts: servicio_db
+  become: true
+  gather_facts: false
+  tasks:
+    - name: PostgreSQL activo
+      ansible.builtin.assert:
+        that: ansible_facts.services['postgresql.service'].state == 'running'
+        quiet: true
+
+    - name: Tamaño de la base y conexiones abiertas
+      ansible.builtin.command: >-
+        sudo -u postgres psql -tA -c
+        "SELECT pg_size_pretty(pg_database_size('asistencia_db')) || ' · ' ||
+                (SELECT count(*) FROM pg_stat_activity WHERE datname = 'asistencia_db') || ' conexiones'"
+      register: base
+      changed_when: false
+
+    - name: Resultado
+      ansible.builtin.debug:
+        msg: "Base asistencia_db: {{ base.stdout }}"

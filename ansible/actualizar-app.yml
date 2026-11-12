@@ -1,0 +1,110 @@
+# Actualiza la aplicación EN SITIO (RF-15), sin recrear servidores. Pensado para muchos
+# tenants a la vez; para uno solo, la plataforma hace lo mismo desde su pantalla.
+#
+#   ansible-playbook actualizar-app.yml -e version=v1.2.0 -l tenant_colegio_demo
+#   ansible-playbook actualizar-app.yml -e version=v1.2.0 -l entorno_staging
+#   ansible-playbook actualizar-app.yml -e version=v1.2.0 -l entorno_prod -e lote=3
+#
+# Va de a "lote" instancias (1 por defecto): si una falla, se detiene antes de tocar las demás.
+# Primero todos los backends (migraciones) y después los frontends.
+
+- name: Backend (Django)
+  hosts: servicio_backend
+  become: true
+  serial: "{{ lote | default(1) }}"
+  any_errors_fatal: true
+  vars:
+    app: /opt/asistencia/app
+    como_app: sudo -u asistencia   # el repo es del usuario asistencia
+
+  pre_tasks:
+    - name: Se necesita una versión válida
+      ansible.builtin.assert:
+        that: version is defined and version is match('^[A-Za-z0-9._/-]+$')
+        fail_msg: "Indica la versión: -e version=<rama o tag>"
+      run_once: true
+
+  tasks:
+    - name: Commit actual
+      ansible.builtin.command: "{{ como_app }} git -C {{ app }} rev-parse --short HEAD"
+      register: antes
+      changed_when: false
+
+    - name: Descargar y cambiar a {{ version }}
+      ansible.builtin.shell: |
+        {{ como_app }} git -C {{ app }} fetch --depth 1 origin {{ version | quote }}
+        {{ como_app }} git -C {{ app }} checkout -q --force FETCH_HEAD
+        {{ como_app }} git -C {{ app }} rev-parse --short HEAD
+      register: despues
+      changed_when: despues.stdout_lines[-1] != antes.stdout
+
+    - name: Dependencias, migraciones y archivos estáticos
+      ansible.builtin.command: "{{ item }}"
+      loop:
+        - "{{ como_app }} /opt/asistencia/venv/bin/pip install -q -r {{ app }}/requirements.txt"
+        - "{{ como_app }} /opt/asistencia/venv/bin/python {{ app }}/manage.py migrate --noinput"
+        - "{{ como_app }} /opt/asistencia/venv/bin/python {{ app }}/manage.py collectstatic --noinput -v 0"
+      when: despues is changed or (forzar | default(false) | bool)
+
+    - name: Reiniciar Gunicorn
+      ansible.builtin.systemd_service:
+        name: asistencia
+        state: restarted
+      when: despues is changed or (forzar | default(false) | bool)
+
+    - name: La API responde
+      ansible.builtin.uri:
+        url: http://127.0.0.1/api/modulo-activo/
+      register: api
+      retries: 15
+      delay: 2
+      until: api.status == 200
+
+    - name: Resultado
+      ansible.builtin.debug:
+        msg: "{{ tenant }} backend: {{ antes.stdout }} → {{ despues.stdout_lines[-1] }}"
+
+
+- name: Frontend (React)
+  hosts: servicio_frontend
+  become: true
+  serial: "{{ lote | default(1) }}"
+  any_errors_fatal: true
+  vars:
+    app: /opt/asistencia-frontend
+    web: /var/www/asistencia
+
+  tasks:
+    - name: Commit actual
+      ansible.builtin.command: git -C {{ app }} rev-parse --short HEAD
+      register: antes
+      changed_when: false
+
+    - name: Descargar y cambiar a {{ version }}
+      ansible.builtin.shell: |
+        git -C {{ app }} fetch --depth 1 origin {{ version | quote }}
+        git -C {{ app }} checkout -q --force FETCH_HEAD
+        git -C {{ app }} rev-parse --short HEAD
+      register: despues
+      changed_when: despues.stdout_lines[-1] != antes.stdout
+
+    - name: Compilar y publicar (cambio atómico de carpeta)
+      ansible.builtin.shell: |
+        set -e
+        export HOME=/root
+        cd {{ app }}
+        npm ci --no-audit --no-fund
+        npm run build
+        rm -rf {{ web }}.nuevo && cp -r dist {{ web }}.nuevo
+        rm -rf {{ web }}.anterior && mv {{ web }} {{ web }}.anterior
+        mv {{ web }}.nuevo {{ web }}
+      when: despues is changed or (forzar | default(false) | bool)
+
+    - name: La aplicación y su API responden
+      ansible.builtin.uri:
+        url: "http://127.0.0.1{{ item }}"
+      loop: [/, /api/modulo-activo/]
+
+    - name: Resultado
+      ansible.builtin.debug:
+        msg: "{{ tenant }} frontend: {{ antes.stdout }} → {{ despues.stdout_lines[-1] }}"

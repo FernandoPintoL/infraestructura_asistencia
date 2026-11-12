@@ -1,0 +1,4 @@
+pulumi>=3.150,<4
+pulumi-aws>=6.60,<7
+pulumi-random>=4.16,<5
+pulumi-tls>=5.0,<6

@@ -1,0 +1,60 @@
+#cloud-config
+# Instancia de FRONTEND del tenant: compila React con Vite y lo sirve con Nginx.
+# Es la ÚNICA entrada pública del tenant: Nginx reenvía /api, /django-admin y /static
+# al backend por su IP privada. Así el backend no queda expuesto a internet y el
+# navegador habla con un solo origen (no hace falta CORS).
+# Terraform reemplaza las variables entre llaves (repositorio, versión, IP del backend).
+
+packages:
+  - git
+  - nginx
+  - curl
+  - ca-certificates
+  - prometheus-node-exporter
+
+write_files:
+  - path: /etc/nginx/sites-available/asistencia
+    content: |
+      server {
+          listen 80 default_server;
+          server_name _;
+          root /var/www/asistencia;
+          index index.html;
+          client_max_body_size 10M;
+
+          # API y admin de Django → backend privado del mismo tenant
+          location ~ ^/(api|django-admin|static)/ {
+              proxy_pass http://${backend_ip};
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+          }
+
+          # Rutas de React (/panel/modulos, ...) devuelven index.html
+          location / {
+              try_files $uri $uri/ /index.html;
+          }
+      }
+
+runcmd:
+  - export HOME=/root
+
+  # 1 GB de swap: t3.micro tiene poca memoria para compilar
+  - fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+  - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+  # Node.js 22 (el de Ubuntu es muy antiguo para Vite). Ya viene en la AMI de Packer.
+  - command -v node >/dev/null 2>&1 || { curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt-get install -y nodejs; }
+
+  # Código y compilación. La API es relativa: mismo origen que el frontend.
+  - git clone --branch "${app_version}" --depth 1 "${repo_url}" /opt/asistencia-frontend
+  - echo "VITE_API_URL=/api" > /opt/asistencia-frontend/.env
+  - cd /opt/asistencia-frontend && npm ci && npm run build
+  - mkdir -p /var/www/asistencia && cp -r /opt/asistencia-frontend/dist/. /var/www/asistencia/
+
+  # Activar Nginx
+  - rm -f /etc/nginx/sites-enabled/default
+  - ln -sf /etc/nginx/sites-available/asistencia /etc/nginx/sites-enabled/asistencia
+  - systemctl restart nginx
+  - echo "FRONTEND LISTO"
