@@ -4,7 +4,7 @@ El mismo tenant que [`terraform/tenant`](../../terraform/tenant), escrito en Pyt
 mismos recursos y nombres (`asistencia-<id>-<entorno>-*`), mismas etiquetas, **mismos archivos
 cloud-init** (los lee de `../../terraform/tenant/cloud-init`) y mismas salidas. Por eso la
 plataforma, Ansible, Prometheus y las pruebas de aislamiento lo tratan igual que a Terraform.
-Comparación: [docs/COMPARACION-MOTORES.md](../../../docs/COMPARACION-MOTORES.md).
+Comparación: [docs/COMPARACION-MOTORES.md](../../docs/COMPARACION-MOTORES.md).
 
 ## Preparar el worker (una vez)
 ```powershell

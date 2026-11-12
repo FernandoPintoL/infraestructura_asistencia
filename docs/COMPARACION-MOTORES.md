@@ -2,24 +2,24 @@
 
 La plataforma deja elegir el motor de cada tenant (RF-08). **Terraform** es el motor principal;
 **OpenTofu** usa las mismas plantillas; **Pulumi** es la segunda implementación completa; y
-**CloudFormation** se evaluó con una implementación de un solo tenant (`anteriores/cloud_init/cloudformation`)
+**CloudFormation** se evaluó con una implementación de un solo tenant (`cloudformation/`)
 y se documenta aquí por qué no se adoptó como motor multi-tenant.
 
 ## Qué hay de cada uno en el proyecto
 
 | Motor | Implementación | Multi-tenant en la plataforma |
 |---|---|---|
-| Terraform | [`infraestructura/terraform/tenant`](../infraestructura/terraform/tenant) (+ `bootstrap/`, `monitoreo/`) | ✅ motor principal |
+| Terraform | [`terraform/tenant`](../terraform/tenant) (+ `bootstrap/`, `monitoreo/`) | ✅ motor principal |
 | OpenTofu | Las mismas plantillas de Terraform (`-Motor tofu` / motor `tofu`) | ✅ |
-| Pulumi (Python) | [`infraestructura/pulumi/tenant`](../infraestructura/pulumi/tenant), mismos cloud-init y salidas | ✅ segunda implementación |
-| CloudFormation | [`anteriores/cloud_init/cloudformation`](../anteriores/cloud_init/cloudformation/asistencia.yaml) (versión de 1 tenant) | ❌ ver conclusión |
+| Pulumi (Python) | [`pulumi/tenant`](../pulumi/tenant), mismos cloud-init y salidas | ✅ segunda implementación |
+| CloudFormation | [`cloudformation/asistencia.yaml`](../cloudformation/asistencia.yaml) (versión de 1 tenant) | ❌ ver conclusión |
 
 ## Datos medidos en este proyecto
 
 | | Terraform | Pulumi | CloudFormation |
 |---|---|---|---|
-| Versión de 1 tenant (`anteriores/cloud_init/`), líneas sin comentarios | 275 | 142 | 340 |
-| Versión multi-tenant (`infraestructura/`), líneas sin comentarios | 610 (9 archivos) | 193 (1 archivo; líneas más largas) | — |
+| Versión de 1 tenant (trabajo anterior del módulo), líneas sin comentarios | 275 | 142 | 340 |
+| Versión multi-tenant (este repositorio), líneas sin comentarios | 610 (9 archivos) | 193 (1 archivo; líneas más largas) | — |
 | Recursos por tenant | 25 tipos declarados | los mismos | — |
 | Pruebas sin la nube | `terraform validate` + render de cloud-init | 3 pruebas con *mocks* de Pulumi (`test_programa.py`) | `cfn-lint` (no incluido) |
 
@@ -53,7 +53,7 @@ monitorear y probar el aislamiento funcionan igual sin importar el motor.
 - **Pulumi** es la mejor alternativa cuando el equipo prefiere programar: el tenant entero cabe en
   un archivo de Python, se prueba con pytest sin tocar AWS y reutiliza los mismos cloud-init.
   Costo: un runtime más en el worker y una frase secreta adicional que custodiar.
-- **CloudFormation** sirve para una instalación fija (así se hizo en `anteriores/cloud_init/cloudformation`,
+- **CloudFormation** sirve para una instalación fija (así se hizo en `cloudformation/`,
   donde las contraseñas las genera un script y se pasan como parámetros `NoEcho`), pero para una
   plataforma multi-tenant le faltan tres piezas que el diseño necesita: generar secretos y
   guardarlos como SSM SecureString, componer el `.env` con ellos y detener/encender instancias

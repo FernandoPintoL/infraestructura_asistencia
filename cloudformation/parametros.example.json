@@ -1,0 +1,10 @@
+[
+    "MiIp=0.0.0.0/32",
+    "VpcId=vpc-xxxxxxxxxxxxxxxxx",
+    "VpcCidr=172.31.0.0/16",
+    "SubnetId=subnet-xxxxxxxxxxxxxxxxx",
+    "AdminUsuario=admin",
+    "AdminPassword=CambiaEstaClave2026",
+    "DbPassword=GeneradaPorElScriptDe24Letras",
+    "DjangoSecretKey=GeneradaPorElScriptDe60LetrasYNumerosSinSimbolosXXXXXXXXXXXX"
+]

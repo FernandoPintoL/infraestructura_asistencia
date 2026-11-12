@@ -55,9 +55,10 @@ CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhos
 
 ## 3 · Levantar todo
 
-Cierra antes cualquier `runserver` o `npm run dev` que tengas abierto, y desde la **raíz** del proyecto:
+Cierra antes cualquier `runserver` o `npm run dev` que tengas abierto, y desde la carpeta **`infraestructura`** (el script encuentra el backend y el frontend en las carpetas de al lado):
 
 ```powershell
+cd infraestructura
 powershell -ExecutionPolicy Bypass -File .\iniciar-local.ps1
 ```
 

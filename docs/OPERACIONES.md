@@ -10,7 +10,7 @@ IAC_SIMULADO=True
 IAC_SIMULADO_URL_APP=http://localhost:5174    # el enlace "Aplicación" abre la app local
 CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,http://localhost:5174,http://127.0.0.1:5174
 ```
-y luego, en la raíz: `powershell -ExecutionPolicy Bypass -File .\iniciar-local.ps1` (abre backend,
+y luego, en la carpeta `infraestructura`: `powershell -ExecutionPolicy Bypass -File .\iniciar-local.ps1` (abre backend,
 worker, plataforma en **:5173** y app de asistencia en **:5174**). La barra muestra **Modo simulado**.
 
 | Qué se simula | Cómo |
@@ -104,7 +104,7 @@ A mano: `.\tenant.ps1 -Tenant <id> -Entorno dev -Accion plan-destroy` y luego `-
 
 ## Probar el aislamiento entre tenants (entregable 7)
 ```powershell
-python manage.py probar_aislamiento colegio-a:dev colegio-b:dev --salida ..\docs\evidencia-aislamiento.md
+python manage.py probar_aislamiento colegio-a:dev colegio-b:dev --salida ..\infraestructura\docs\evidencia-aislamiento.md
 ```
 Desde las instancias de B intenta llegar a la base y al backend de A (red), leer los secretos de A
 (IAM/SSM), escribir en sus respaldos (S3) y usar un token de B en la API de A; cada vía tiene una

@@ -1,14 +1,15 @@
 ﻿# Levanta TODO en local para probar la plataforma sin AWS (modo simulado).
 # Abre 4 ventanas: backend, worker, plataforma (5173) y app de asistencia (5174).
 #
-# Uso (PowerShell, en esta carpeta):
+# Uso (PowerShell, en la carpeta infraestructura):
 #   powershell -ExecutionPolicy Bypass -File .\iniciar-local.ps1
 #
 # Requisitos (una vez): asistencia_backend\venv con requirements.txt, npm ci en asistencia_frontend,
 # y en asistencia_backend\.env: PLATAFORMA_HABILITADA=True e IAC_SIMULADO=True.
 # Para cerrar todo: cierra las 4 ventanas.
 
-$raiz = $PSScriptRoot
+# Este script vive en infraestructura/; el backend y el frontend están al lado (carpetas hermanas).
+$raiz = Split-Path $PSScriptRoot -Parent
 $back = Join-Path $raiz "asistencia_backend"
 $front = Join-Path $raiz "asistencia_frontend"
 $py = Join-Path $back "venv\Scripts\python.exe"

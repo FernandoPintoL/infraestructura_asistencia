@@ -1,0 +1,431 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  Sistema de asistencia en 3 instancias EC2 (db, backend, frontend) instaladas con cloud-init.
+
+# ───────────── Parámetros (se completan en parametros.json) ─────────────
+
+Parameters:
+  MiIp:
+    Type: String
+    Description: Tu IP pública con /32 (ej. 181.115.10.20/32). Solo ella puede entrar por SSH
+    AllowedPattern: '^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}/\d{1,2}$'
+    ConstraintDescription: Debe ser una IP en formato CIDR, por ejemplo 181.115.10.20/32.
+
+  AdminUsuario:
+    Type: String
+    Default: admin
+    Description: Usuario administrador del sistema
+
+  AdminPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Contraseña del administrador del sistema
+    AllowedPattern: '^[^''"$`\\]+$'
+    ConstraintDescription: Mínimo 8 caracteres y sin comillas, $, ` ni \.
+
+  DbPassword:
+    Type: String
+    NoEcho: true
+    Description: Contraseña de PostgreSQL (la genera generar-parametros.ps1)
+    AllowedPattern: '^[A-Za-z0-9]{16,}$'
+    ConstraintDescription: Solo letras y números, mínimo 16.
+
+  DjangoSecretKey:
+    Type: String
+    NoEcho: true
+    Description: SECRET_KEY de Django (la genera generar-parametros.ps1)
+    AllowedPattern: '^[A-Za-z0-9]{40,}$'
+    ConstraintDescription: Solo letras y números, mínimo 40.
+
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: VPC por defecto de la cuenta
+
+  VpcCidr:
+    Type: String
+    Default: 172.31.0.0/16
+    Description: Rango de IPs de la VPC (PostgreSQL acepta conexiones desde aquí)
+
+  SubnetId:
+    Type: AWS::EC2::Subnet::Id
+    Description: Subnet pública de la VPC por defecto
+
+  RepoBackendUrl:
+    Type: String
+    Default: https://github.com/FernandoPintoL/asistencia_backend.git
+    Description: URL HTTPS del repositorio del backend (debe ser público)
+
+  RepoFrontendUrl:
+    Type: String
+    Default: https://github.com/FernandoPintoL/asistencia_frontend.git
+    Description: URL HTTPS del repositorio del frontend (debe ser público)
+
+  RepoRama:
+    Type: String
+    Default: main
+    Description: Rama que se despliega (la misma en ambos repositorios)
+
+  TipoInstancia:
+    Type: String
+    Default: t3.micro
+    Description: Tamaño de las 3 instancias EC2 (t3.micro entra en la capa gratuita)
+
+  # Ubuntu 24.04 LTS oficial: Canonical publica el ID de la última imagen en SSM
+  AmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/canonical/ubuntu/server/24.04/stable/current/amd64/hvm/ebs-gp3/ami-id
+
+Resources:
+
+  # ───────────── Llave SSH (la privada queda en SSM Parameter Store) ─────────────
+
+  KeyPair:
+    Type: AWS::EC2::KeyPair
+    Properties:
+      KeyName: !Sub ${AWS::StackName}-key
+
+  # ───────────── Firewalls (security groups) ─────────────
+
+  SgFrontend:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Web publica del frontend
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: HTTP
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - Description: SSH solo desde mi IP
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MiIp
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-frontend
+
+  SgBackend:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: API publica del backend
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: HTTP
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - Description: SSH solo desde mi IP
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MiIp
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-backend
+
+  SgDb:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: PostgreSQL accesible solo desde el backend
+      VpcId: !Ref VpcId
+      SecurityGroupIngress:
+        - Description: PostgreSQL solo desde el backend
+          IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !GetAtt SgBackend.GroupId
+        - Description: SSH solo desde mi IP
+          IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref MiIp
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-db
+
+  # ───────────── IPs fijas (se crean antes que las instancias) ─────────────
+  # El frontend necesita la IP del backend (VITE_API_URL) y el backend la del
+  # frontend (CORS). Con IPs elásticas ambas se conocen desde el principio.
+
+  EipFrontend:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-frontend
+
+  EipBackend:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-backend
+
+  # ───────────── Instancia 1: base de datos ─────────────
+  # !Sub reemplaza las variables entre llaves antes de enviar el cloud-init.
+
+  Db:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref TipoInstancia
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!GetAtt SgDb.GroupId]
+      KeyName: !Ref KeyPair
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 16
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-db
+      UserData:
+        Fn::Base64: !Sub |
+          #cloud-config
+          # Instancia de BASE DE DATOS: PostgreSQL con la base y el usuario de la app.
+
+          packages:
+            - postgresql
+
+          write_files:
+            - path: /etc/asistencia/init.sql
+              permissions: "0600"
+              content: |
+                CREATE USER asistencia WITH PASSWORD '${DbPassword}';
+                CREATE DATABASE asistencia_db OWNER asistencia;
+
+          runcmd:
+            # Escuchar en la red privada y aceptar conexiones con contraseña desde la VPC.
+            # El security group ya limita el puerto 5432 a la instancia del backend.
+            - PG_DIR=$(ls -d /etc/postgresql/*/main | head -n 1) && echo "listen_addresses = '*'" >> "$PG_DIR/postgresql.conf"
+            - PG_DIR=$(ls -d /etc/postgresql/*/main | head -n 1) && echo "host asistencia_db asistencia ${VpcCidr} scram-sha-256" >> "$PG_DIR/pg_hba.conf"
+            - systemctl restart postgresql
+            - sudo -u postgres psql -v ON_ERROR_STOP=1 < /etc/asistencia/init.sql
+            - echo "BASE DE DATOS LISTA"
+
+  # ───────────── Instancia 2: backend (Django) ─────────────
+
+  Backend:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref TipoInstancia
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!GetAtt SgBackend.GroupId]
+      KeyName: !Ref KeyPair
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 16
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-backend
+      UserData:
+        Fn::Base64: !Sub |
+          #cloud-config
+          # Instancia de BACKEND: Django detrás de Gunicorn y Nginx.
+
+          packages:
+            - python3-venv
+            - git
+            - nginx
+            - postgresql-client
+
+          write_files:
+            # Variables de Django. Se enlaza como .env del repositorio después de clonarlo.
+            - path: /etc/asistencia.env
+              permissions: "0600"
+              content: |
+                SECRET_KEY=${DjangoSecretKey}
+                DEBUG=False
+                ALLOWED_HOSTS=${EipBackend}
+                DB_NAME=asistencia_db
+                DB_USER=asistencia
+                DB_PASSWORD=${DbPassword}
+                DB_HOST=${Db.PrivateIp}
+                DB_PORT=5432
+                CORS_ALLOWED_ORIGINS=http://${EipFrontend}
+                JWT_HORAS=8
+
+            # Gunicorn como servicio (arranca solo al reiniciar la instancia)
+            - path: /etc/systemd/system/asistencia.service
+              content: |
+                [Unit]
+                Description=Backend de asistencia (Gunicorn)
+                After=network.target
+
+                [Service]
+                User=asistencia
+                WorkingDirectory=/opt/asistencia/app
+                ExecStart=/opt/asistencia/venv/bin/gunicorn config.wsgi:application --bind 127.0.0.1:8000 --workers 2
+                Restart=always
+
+                [Install]
+                WantedBy=multi-user.target
+
+            # Nginx recibe en el puerto 80 y pasa las peticiones a Gunicorn
+            - path: /etc/nginx/sites-available/asistencia
+              content: |
+                server {
+                    listen 80 default_server;
+                    server_name _;
+                    client_max_body_size 10M;
+
+                    location /static/ {
+                        alias /opt/asistencia/app/staticfiles/;
+                    }
+
+                    location / {
+                        proxy_pass http://127.0.0.1:8000;
+                        proxy_set_header Host $host;
+                        proxy_set_header X-Real-IP $remote_addr;
+                        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                        proxy_set_header X-Forwarded-Proto $scheme;
+                    }
+                }
+
+          runcmd:
+            # Usuario de sistema que ejecuta la aplicación
+            - useradd --system --create-home --home-dir /opt/asistencia --shell /usr/sbin/nologin asistencia
+            - chmod 755 /opt/asistencia
+
+            # Código y dependencias
+            - git clone --branch "${RepoRama}" --depth 1 "${RepoBackendUrl}" /opt/asistencia/app
+            - ln -s /etc/asistencia.env /opt/asistencia/app/.env
+            - python3 -m venv /opt/asistencia/venv
+            - /opt/asistencia/venv/bin/pip install --upgrade pip
+            - /opt/asistencia/venv/bin/pip install -r /opt/asistencia/app/requirements.txt
+            - chown root:asistencia /etc/asistencia.env && chmod 640 /etc/asistencia.env
+            - chown -R asistencia:asistencia /opt/asistencia
+
+            # Esperar a que la instancia de base de datos termine de instalarse
+            - until PGPASSWORD='${DbPassword}' psql -h "${Db.PrivateIp}" -U asistencia -d asistencia_db -c 'SELECT 1' >/dev/null 2>&1; do echo "Esperando a la base de datos..."; sleep 10; done
+
+            # Tablas, archivos estáticos y usuario administrador
+            - cd /opt/asistencia/app && sudo -u asistencia /opt/asistencia/venv/bin/python manage.py migrate --noinput
+            - cd /opt/asistencia/app && sudo -u asistencia /opt/asistencia/venv/bin/python manage.py collectstatic --noinput
+            - |
+              cd /opt/asistencia/app && sudo -u asistencia env \
+                DJANGO_SUPERUSER_USERNAME='${AdminUsuario}' \
+                DJANGO_SUPERUSER_PASSWORD='${AdminPassword}' \
+                DJANGO_SUPERUSER_EMAIL='admin@example.com' \
+                /opt/asistencia/venv/bin/python manage.py createsuperuser --noinput
+
+            # Activar Gunicorn y Nginx
+            - rm -f /etc/nginx/sites-enabled/default
+            - ln -sf /etc/nginx/sites-available/asistencia /etc/nginx/sites-enabled/asistencia
+            - systemctl daemon-reload
+            - systemctl enable --now asistencia
+            - systemctl restart nginx
+            - echo "BACKEND LISTO"
+
+  EipAssocBackend:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt EipBackend.AllocationId
+      InstanceId: !Ref Backend
+
+  # ───────────── Instancia 3: frontend (React) ─────────────
+
+  Frontend:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AmiId
+      InstanceType: !Ref TipoInstancia
+      SubnetId: !Ref SubnetId
+      SecurityGroupIds: [!GetAtt SgFrontend.GroupId]
+      KeyName: !Ref KeyPair
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 16
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: !Sub ${AWS::StackName}-frontend
+      UserData:
+        Fn::Base64: !Sub |
+          #cloud-config
+          # Instancia de FRONTEND: compila React con Vite y lo sirve con Nginx.
+
+          packages:
+            - git
+            - nginx
+            - curl
+            - ca-certificates
+
+          write_files:
+            # try_files: cualquier ruta de React (/panel/modulos, ...) devuelve index.html
+            - path: /etc/nginx/sites-available/asistencia
+              content: |
+                server {
+                    listen 80 default_server;
+                    server_name _;
+                    root /var/www/asistencia;
+                    index index.html;
+
+                    location / {
+                        try_files $uri $uri/ /index.html;
+                    }
+                }
+
+          runcmd:
+            - export HOME=/root
+
+            # 1 GB de swap: la instancia t3.micro tiene poca memoria para compilar
+            - fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile
+            - echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
+            # Node.js 22 (el de Ubuntu es muy antiguo para Vite)
+            - curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+            - apt-get install -y nodejs
+
+            # Código y compilación
+            - git clone --branch "${RepoRama}" --depth 1 "${RepoFrontendUrl}" /opt/asistencia-frontend
+            - echo "VITE_API_URL=http://${EipBackend}/api" > /opt/asistencia-frontend/.env
+            - cd /opt/asistencia-frontend && npm ci && npm run build
+            - mkdir -p /var/www/asistencia && cp -r /opt/asistencia-frontend/dist/. /var/www/asistencia/
+
+            # Activar Nginx
+            - rm -f /etc/nginx/sites-enabled/default
+            - ln -sf /etc/nginx/sites-available/asistencia /etc/nginx/sites-enabled/asistencia
+            - systemctl restart nginx
+            - echo "FRONTEND LISTO"
+
+  EipAssocFrontend:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt EipFrontend.AllocationId
+      InstanceId: !Ref Frontend
+
+# ───────────── Salidas (pestaña Outputs de la pila) ─────────────
+
+Outputs:
+  UrlFrontend:
+    Description: Abre esta dirección en el navegador
+    Value: !Sub http://${EipFrontend}
+  UrlPanelAdmin:
+    Value: !Sub http://${EipFrontend}/panel/login
+  UrlApi:
+    Value: !Sub http://${EipBackend}/api/modulo-activo/
+  UrlDjangoAdmin:
+    Value: !Sub http://${EipBackend}/django-admin/
+  SshFrontend:
+    Value: !Sub ssh -i ${AWS::StackName}-key.pem ubuntu@${EipFrontend}
+  SshBackend:
+    Value: !Sub ssh -i ${AWS::StackName}-key.pem ubuntu@${EipBackend}
+  SshDb:
+    Value: !Sub ssh -i ${AWS::StackName}-key.pem ubuntu@${Db.PublicIp}
+  DbIpPrivada:
+    Value: !GetAtt Db.PrivateIp
+  LlaveSshParametro:
+    Description: Nombre del parámetro de SSM con la llave privada (ver README)
+    Value: !Sub /ec2/keypair/${KeyPair.KeyPairId}

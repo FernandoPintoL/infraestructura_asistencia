@@ -40,7 +40,7 @@ flowchart LR
 |---|---|---|
 | **Terraform / OpenTofu** | Motor principal: red, firewalls, roles IAM, secretos, 3 EC2 por tenant, suspender (detener instancias). Además el bucket de estado (`bootstrap/`) y el servidor de monitoreo | `infraestructura/terraform` |
 | **Pulumi** | Segunda implementación del mismo tenant, elegible por tenant (RF-08) | `infraestructura/pulumi/tenant` |
-| **CloudFormation** | Comparación técnica (versión de 1 tenant) | `anteriores/cloud_init/cloudformation`, [comparación](COMPARACION-MOTORES.md) |
+| **CloudFormation** | Comparación técnica (versión de 1 tenant) | `cloudformation/`, [comparación](COMPARACION-MOTORES.md) |
 | **cloud-init** | Configuración inicial de cada VM en su primer arranque: lee sus secretos de SSM, clona la app, migra, enciende servicios | `infraestructura/terraform/tenant/cloud-init` |
 | **Packer** | Imagen base (AMI) con todo lo común ya instalado y endurecido: arranques de 1–3 min | `infraestructura/packer` |
 | **Ansible** | Configuración posterior de la flota: endurecimiento, PostgreSQL según la memoria, actualizaciones masivas, verificación de salud; inventario dinámico por etiquetas, conexión por SSM | `infraestructura/ansible` |

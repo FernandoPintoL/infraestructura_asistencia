@@ -3,7 +3,7 @@
 **Ansible** se conecta a instancias que ya existen y deja su configuración en el estado
 deseado. Es **idempotente**: si algo ya está bien, no lo toca (`ok`); si lo cambia, `changed`.
 
-> No confundir con [`anteriores/ansible/`](../../anteriores/ansible/README.md) (trabajo anterior): allí Ansible
+> No confundir con el Ansible del trabajo anterior del módulo (fuera de este repositorio): allí Ansible
 > prepara un *servidor de trabajo* con Terraform/Pulumi/AWS CLI. Esta carpeta configura las
 > instancias **de los tenants**.
 
